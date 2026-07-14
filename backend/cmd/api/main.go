@@ -1,18 +1,23 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
-
-	"backend/internal/infrastructure/database/models"
-
-	appHttp "backend/internal/interface/http"
 
 	"github.com/gin-gonic/gin"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	// Ajuste "seu_projeto" para o nome real do seu módulo Go
+	"backend/internal/infrastructure/database/models"
+	"backend/internal/infrastructure/database/repositories"
+	"backend/internal/infrastructure/messaging"
+	"backend/internal/infrastructure/secullum"
+	appHttp "backend/internal/interface/http"
+	"backend/internal/usecase"
 )
 
 func main() {
@@ -21,17 +26,15 @@ func main() {
 	// 1. Configuração e Conexão com PostgreSQL
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		// Fallback para ambiente de desenvolvimento local
 		dsn = "host=localhost user=postgres password=postgres dbname=auditoria_db port=5432 sslmode=disable"
 	}
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{TranslateError: true})
 	if err != nil {
-		log.Fatalf("Falha ao conectar ao banco de dados PostgreSQL: %v", err)
+		log.Fatalf("Falha ao conectar ao PostgreSQL: %v", err)
 	}
 	log.Println("Conexão com PostgreSQL estabelecida com sucesso.")
 
-	// Executa as migrações automáticas baseadas nas structs que definimos
 	err = db.AutoMigrate(
 		&models.Tenant{},
 		&models.TenantSettings{},
@@ -41,7 +44,7 @@ func main() {
 		&models.Report{},
 	)
 	if err != nil {
-		log.Fatalf("Falha ao executar AutoMigrate do GORM: %v", err)
+		log.Fatalf("Falha no AutoMigrate do GORM: %v", err)
 	}
 	log.Println("Migração do banco de dados concluída.")
 
@@ -58,48 +61,87 @@ func main() {
 	defer rabbitConn.Close()
 	log.Println("Conexão com RabbitMQ estabelecida com sucesso.")
 
-	// Configuração das filas essenciais da nossa arquitetura
 	ch, err := rabbitConn.Channel()
 	if err != nil {
-		log.Fatalf("Falha ao abrir um canal no RabbitMQ: %v", err)
+		log.Fatalf("Falha ao abrir canal no RabbitMQ: %v", err)
 	}
 	defer ch.Close()
 
 	filas := []string{"audit.trigger", "audit.process", "notifications.whatsapp", "tenant.provisioning"}
 	for _, fila := range filas {
-		_, err = ch.QueueDeclare(
-			fila,
-			true,  // durable
-			false, // delete when unused
-			false, // exclusive
-			false, // no-wait
-			nil,   // arguments
-		)
+		_, err = ch.QueueDeclare(fila, true, false, false, false, nil)
 		if err != nil {
 			log.Fatalf("Falha ao declarar a fila %s: %v", fila, err)
 		}
 	}
 	log.Println("Filas do RabbitMQ declaradas com sucesso.")
 
-	// 3. Inicialização do Gin Gonic
-	// Definimos o Gin para usar o modo Release em produção via variável de ambiente
+	// =====================================================================
+	// 3. INJEÇÃO DE DEPENDÊNCIAS (WIRING)
+	// =====================================================================
+
+	// Repositórios (Mapeiam o DB para o Domínio)
+	tenantRepo := repositories.NewTenantRepository(db)
+	reportRepo := repositories.NewReportRepository(db)
+
+	// Serviços Externos (Client HTTP da API Secullum).
+	// Credenciais GLOBAIS (mesma para todos os tenants), vindas de env. O client cuida
+	// da renovação do token (1h) e do rate limit (100 req/min) automaticamente.
+	secullumBaseURL := os.Getenv("SECULLUM_API_URL")
+	if secullumBaseURL == "" {
+		secullumBaseURL = "https://api.secullum.com.br"
+	}
+	secullumSvc := secullum.NewSecullumClient(secullum.Config{
+		BaseURL:              secullumBaseURL,
+		AuthURL:              os.Getenv("SECULLUM_AUTH_URL"),
+		Username:             os.Getenv("SECULLUM_USERNAME"),
+		Password:             os.Getenv("SECULLUM_PASSWORD"),
+		StaticToken:          os.Getenv("SECULLUM_API_TOKEN"), // opcional (testes)
+		MaxRequestsPerMinute: 100,
+	})
+
+	// Motor de Regras (O Cérebro)
+	auditorCore := usecase.NewAuditorService()
+
+	// Pool de canais para publicação HTTP (canais AMQP não são seguros para uso
+	// concorrente; cada requisição empresta um canal exclusivo do pool).
+	publisherPool, err := messaging.NewChannelPool(rabbitConn, 5)
+	if err != nil {
+		log.Fatalf("Falha ao criar o pool de canais de publicação: %v", err)
+	}
+	defer publisherPool.Close()
+
+	// =====================================================================
+	// 4. INICIALIZAÇÃO DO WORKER (CONSUMER DO RABBITMQ)
+	// =====================================================================
+	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, secullumSvc, reportRepo, auditorCore)
+
+	// A palavra reservada 'go' faz esta função rodar em background.
+	// Assim, ela fica a escutar a fila infinitamente sem parar o servidor web.
+	go func() {
+		log.Println("Iniciando Worker de Auditoria em background...")
+		if err := auditConsumer.Start(context.Background()); err != nil {
+			log.Fatalf("Falha crítica no Worker de Auditoria: %v", err)
+		}
+	}()
+
+	// =====================================================================
+	// 5. INICIALIZAÇÃO DO SERVIDOR HTTP (GIN GONIC)
+	// =====================================================================
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	router := gin.Default()
+	router := appHttp.SetupRouter(db, publisherPool)
 
-	// 4. Definição de Rotas Iniciais
-	// Endpoint de verificação de integridade da infraestrutura (Conexão DB e Broker)
+	// Endpoint de verificação de integridade da infraestrutura (Conexão DB e Broker).
+	// Registrado aqui porque depende da conexão do banco e do broker.
 	router.GET("/health", func(c *gin.Context) {
-		// Validação simples de ping no banco de dados
-		sqlDB, err := db.DB()
 		dbStatus := "up"
-		if err != nil || sqlDB.Ping() != nil {
+		if sqlDB, err := db.DB(); err != nil || sqlDB.Ping() != nil {
 			dbStatus = "down"
 		}
 
-		// Validação do status da conexão AMQP
 		rabbitStatus := "up"
 		if rabbitConn.IsClosed() {
 			rabbitStatus = "down"
@@ -117,14 +159,12 @@ func main() {
 		})
 	})
 
-	router = appHttp.SetupRouter(db, ch)
-	// 5. Inicialização do Servidor HTTP
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	log.Printf("Servidor da API de Auditoria rodando na porta %s...", port)
+	log.Printf("Servidor da API de Auditoria a rodar na porta %s...", port)
 	if err := router.Run(":" + port); err != nil {
 		log.Fatalf("Falha ao iniciar o servidor HTTP: %v", err)
 	}

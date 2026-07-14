@@ -10,6 +10,15 @@ const (
 	SeverityCritical Severity = "CRITICO"
 )
 
+// OrDefault retorna a própria severidade se configurada; caso contrário, o default.
+// Usado quando o tenant não parametrizou a severidade de uma regra.
+func (s Severity) OrDefault(def Severity) Severity {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
 // DailyPunch representa a marcação extraída limpa da API SecullumWEB
 // Diferente da resposta bruta cheia de metadados, o domínio só precisa das horas
 type DailyPunch struct {
@@ -32,15 +41,17 @@ type AuditInconsistency struct {
 
 // Report é o consolidado que será salvo no banco de dados na madrugada
 type Report struct {
+	ID              int
 	TenantID        int
 	Date            time.Time // Data alvo avaliada (D-1)
 	DataGenerated   time.Time // Momento da geração
 	Inconsistencies []AuditInconsistency
 }
 
-// ReportRepository é o contrato para gravar o JSON consolidado das infrações
+// ReportRepository é o contrato para gravar e consultar os relatórios de auditoria.
 type ReportRepository interface {
 	Save(report *Report) error
+	ListByTenant(tenantID int) ([]Report, error)
 }
 
 // SecullumService é o contrato (Interface) que a camada de Infraestrutura HTTP vai implementar.

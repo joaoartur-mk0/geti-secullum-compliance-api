@@ -1,31 +1,32 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// AuditHandler estrutura que guarda as dependências do controlador
-type AuditHandler struct {
-	rabbitChannel *amqp.Channel
+type EventPublisher interface {
+	Publish(ctx context.Context, queue string, body []byte) error
 }
 
-// NewAuditHandler é o construtor do nosso handler
-func NewAuditHandler(ch *amqp.Channel) *AuditHandler {
+type AuditHandler struct {
+	publisher EventPublisher
+}
+
+func NewAuditHandler(publisher EventPublisher) *AuditHandler {
 	return &AuditHandler{
-		rabbitChannel: ch,
+		publisher: publisher,
 	}
 }
 
-// TriggerRequest mapeia o JSON esperado no corpo da requisição
 type TriggerRequest struct {
 	TenantID int `json:"tenant_id" binding:"required"`
 }
 
-// TriggerAudit corresponde ao endpoint POST /api/v1/audit/trigger
 func (h *AuditHandler) TriggerAudit(c *gin.Context) {
 	var req TriggerRequest
 
@@ -44,23 +45,15 @@ func (h *AuditHandler) TriggerAudit(c *gin.Context) {
 		"triggered_by": "manual_http_request", // Pode ser "cron_job" futuramente
 	})
 	if err != nil {
+		log.Printf("[AuditHandler] Falha ao serializar evento do tenant %d: %v", req.TenantID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha interna ao serializar evento"})
 		return
 	}
 
-	// 3. Publica a mensagem na fila 'audit.trigger' do RabbitMQ
-	err = h.rabbitChannel.Publish(
-		"",              // exchange (padrão)
-		"audit.trigger", // routing key (nome da fila que criamos no main.go)
-		false,           // mandatory
-		false,           // immediate
-		amqp.Publishing{
-			ContentType: "application/json",
-			Body:        eventPayload,
-		},
-	)
-
-	if err != nil {
+	// 3. Publica a mensagem na fila 'audit.trigger' via pool de canais (seguro concorrente).
+	//    O contexto da requisição garante que a publicação não bloqueie indefinidamente.
+	if err := h.publisher.Publish(c.Request.Context(), "audit.trigger", eventPayload); err != nil {
+		log.Printf("[AuditHandler] Falha ao enfileirar auditoria do tenant %d: %v", req.TenantID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao enfileirar requisição de auditoria no Broker"})
 		return
 	}

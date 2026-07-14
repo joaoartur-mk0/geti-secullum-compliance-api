@@ -1,0 +1,407 @@
+openapi: 3.0.3
+info:
+  title: Secullum Compliance API
+  description: >
+    Microsserviço de auditoria diária de jornada de trabalho. Consome batidas de ponto
+    da API SecullumWEB, aplica regras de compliance trabalhista (CLT) e disponibiliza
+    relatórios de inconsistências. Esta documentação cobre os endpoints administrativos
+    (CRUD) usados pela interface web de configuração e o disparo de auditoria.
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+    description: Ambiente de desenvolvimento local
+
+tags:
+  - name: Infra
+    description: Saúde da infraestrutura
+  - name: Auditoria
+    description: Disparo e consulta de auditorias
+  - name: Tenants
+    description: CRUD de inquilinos (clientes)
+  - name: Configurações
+    description: Regras e severidades por tenant
+  - name: Responsáveis
+    description: Gestores (staff) que recebem alertas
+  - name: Relatórios
+    description: Painel de consulta de auditorias
+
+paths:
+  /health:
+    get:
+      tags: [Infra]
+      summary: Verifica a saúde da infraestrutura (DB e broker)
+      responses:
+        "200":
+          description: Tudo operacional
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  database: { type: string, example: up }
+                  rabbitmq: { type: string, example: up }
+        "503":
+          description: Banco ou broker indisponível
+
+  /api/v1/audit/trigger:
+    post:
+      tags: [Auditoria]
+      summary: Enfileira uma auditoria para um tenant (processamento assíncrono)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TriggerRequest"
+      responses:
+        "202":
+          description: Auditoria aceita para processamento
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  tenant_id: { type: integer }
+                  status: { type: string, example: processing }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/tenants:
+    get:
+      tags: [Tenants]
+      summary: Lista tenants
+      parameters:
+        - name: include_inactive
+          in: query
+          description: Se "true", inclui tenants desativados
+          schema: { type: string, enum: ["true", "false"] }
+      responses:
+        "200":
+          description: Lista de tenants
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenants:
+                    type: array
+                    items: { $ref: "#/components/schemas/Tenant" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [Tenants]
+      summary: Cadastra um tenant (com um responsável e configurações padrão)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: Tenant criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  tenant: { $ref: "#/components/schemas/Tenant" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/v1/tenants/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    get:
+      tags: [Tenants]
+      summary: Busca um tenant por id
+      responses:
+        "200":
+          description: Tenant encontrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant: { $ref: "#/components/schemas/Tenant" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    put:
+      tags: [Tenants]
+      summary: Atualiza nome e/ou secullum_database_id do tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTenantRequest"
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/tenants/{id}/deactivate:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    patch:
+      tags: [Tenants]
+      summary: Desativa um tenant (soft-deactivation)
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/tenants/{id}/settings:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    get:
+      tags: [Configurações]
+      summary: Busca as configurações de regras do tenant
+      responses:
+        "200":
+          description: Configurações do tenant
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settings: { $ref: "#/components/schemas/Settings" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    put:
+      tags: [Configurações]
+      summary: Atualiza flags, severidades e horários de varredura
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Settings"
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/tenants/{id}/staffs:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    get:
+      tags: [Responsáveis]
+      summary: Lista os responsáveis (staff) do tenant
+      responses:
+        "200":
+          description: Lista de responsáveis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  staffs:
+                    type: array
+                    items: { $ref: "#/components/schemas/Staff" }
+    post:
+      tags: [Responsáveis]
+      summary: Cadastra um responsável no tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffRequest"
+      responses:
+        "201":
+          description: Responsável criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  staff: { $ref: "#/components/schemas/Staff" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /api/v1/staffs/{staffId}:
+    parameters:
+      - name: staffId
+        in: path
+        required: true
+        schema: { type: integer }
+    put:
+      tags: [Responsáveis]
+      summary: Atualiza um responsável
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffRequest"
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    delete:
+      tags: [Responsáveis]
+      summary: Exclui um responsável
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/tenants/{id}/reports:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    get:
+      tags: [Relatórios]
+      summary: Lista os relatórios de auditoria do tenant (mais recentes primeiro)
+      responses:
+        "200":
+          description: Lista de relatórios
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reports:
+                    type: array
+                    items: { $ref: "#/components/schemas/Report" }
+
+components:
+  parameters:
+    TenantId:
+      name: id
+      in: path
+      required: true
+      description: Id local do tenant
+      schema: { type: integer }
+
+  responses:
+    Message:
+      description: Operação bem-sucedida
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+    ValidationError:
+      description: Entrada inválida
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFoundError:
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ConflictError:
+      description: "Conflito (ex.: secullum_database_id duplicado)"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InternalError:
+      description: Erro interno inesperado
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      description: Formato padronizado de erro da API.
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum: [VALIDATION, NOT_FOUND, CONFLICT, INTERNAL]
+            message: { type: string }
+            details: { type: string, nullable: true }
+
+    TriggerRequest:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: integer, example: 1 }
+
+    Tenant:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        name: { type: string, example: "Empresa Exemplo S.A." }
+        secullum_database_id: { type: integer, example: 123 }
+        active: { type: boolean, example: true }
+
+    CreateTenantRequest:
+      type: object
+      required: [name, secullum_database_id, staff_name, staff_contact]
+      properties:
+        name: { type: string, example: "Empresa Exemplo S.A." }
+        secullum_database_id: { type: integer, example: 123 }
+        staff_name: { type: string, example: "Fulano de Tal" }
+        staff_contact: { type: string, example: "5531999999999" }
+
+    UpdateTenantRequest:
+      type: object
+      required: [name, secullum_database_id]
+      properties:
+        name: { type: string }
+        secullum_database_id: { type: integer }
+
+    Staff:
+      type: object
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        name: { type: string }
+        celular: { type: string, example: "5531999999999" }
+
+    StaffRequest:
+      type: object
+      required: [name, celular]
+      properties:
+        name: { type: string }
+        celular: { type: string }
+
+    Settings:
+      type: object
+      description: >
+        Flags habilitam/desabilitam cada regra. Severidades ("ALERTA" ou "CRITICO")
+        são configuráveis por tenant, exceto a de hora extra (limiares legais).
+      properties:
+        almoco: { type: boolean }
+        interjornada: { type: boolean }
+        hextras: { type: boolean }
+        esquecimento: { type: boolean }
+        almoco_severity: { type: string, enum: [ALERTA, CRITICO] }
+        interjornada_severity: { type: string, enum: [ALERTA, CRITICO] }
+        esquecimento_severity: { type: string, enum: [ALERTA, CRITICO] }
+        horarios:
+          type: array
+          items: { type: string, example: "18:30" }
+
+    AuditInconsistency:
+      type: object
+      description: >
+        Nota: os campos seguem o nome das structs Go (sem json tags), por isso a
+        capitalização difere do restante da API.
+      properties:
+        CollaboratorID: { type: integer }
+        CollaboratorName: { type: string }
+        Type: { type: string, example: "Interjornada Curta" }
+        Severity: { type: string, enum: [ALERTA, CRITICO] }
+        Description: { type: string }
+
+    Report:
+      type: object
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        date: { type: string, example: "2026-07-12" }
+        data_generated: { type: string, format: date-time }
+        total: { type: integer, description: "Número de inconsistências" }
+        inconsistencies:
+          type: array
+          items: { $ref: "#/components/schemas/AuditInconsistency" }

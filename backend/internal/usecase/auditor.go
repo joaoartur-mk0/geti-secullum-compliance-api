@@ -1,11 +1,16 @@
 package usecase
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"backend/internal/domain"
 )
+
+// defaultStandardHours é a carga diária assumida quando o colaborador ainda não
+// tem uma jornada contratual sincronizada localmente.
+const defaultStandardHours = 8.0
 
 type AuditorService struct{}
 
@@ -15,54 +20,145 @@ func NewAuditorService() *AuditorService {
 
 // ProcessRules é a função orquestradora. Recebe as configurações do Inquilino,
 // os dados do colaborador, as batidas de hoje e de ontem (necessário para interjornada).
+//
+// isClosing indica se esta é a avaliação de FECHAMENTO (consolidação noturna do dia
+// encerrado) ou uma varredura INTRA-DIA (expediente em andamento). Regras que só fazem
+// sentido no fim do dia (ex.: contagem ímpar de batidas) são aplicadas apenas no
+// fechamento, evitando falsos positivos durante o expediente.
+//
+// Cada regra retorna, separadamente, uma possível inconsistência trabalhista e um
+// possível erro de dado (ex.: batida em formato inválido). As inconsistências são
+// acumuladas para o relatório; os erros de dado NÃO são descartados — são agregados
+// via errors.Join e devolvidos ao chamador, que decide como registrá-los. Um erro em
+// uma regra não impede a avaliação das demais, garantindo uma auditoria completa e
+// rastreável.
 func (s *AuditorService) ProcessRules(
 	settings *domain.TenantSettings,
 	collab *domain.Collaborator,
 	todayPunch *domain.DailyPunch,
 	yesterdayPunch *domain.DailyPunch,
 	currentTime time.Time,
-) []domain.AuditInconsistency {
+	isClosing bool,
+) ([]domain.AuditInconsistency, error) {
 
 	var infractions []domain.AuditInconsistency
+	var ruleErrors []error
 
 	if settings == nil {
-		return infractions // Se não há configuração, encerra a auditoria
+		return infractions, nil // Se não há configuração, encerra a auditoria
+	}
+
+	// Severidades configuráveis por tenant (default CRITICO se não parametrizadas).
+	almocoSev := settings.AlmocoSeverity.OrDefault(domain.SeverityCritical)
+	interSev := settings.InterjornadaSeverity.OrDefault(domain.SeverityCritical)
+	esqSev := settings.EsquecimentoSeverity.OrDefault(domain.SeverityCritical)
+
+	// collect executa uma regra, acumulando a inconsistência e/ou o erro de dado.
+	collect := func(ruleName string, inc *domain.AuditInconsistency, err error) {
+		if err != nil {
+			ruleErrors = append(ruleErrors, fmt.Errorf("regra %q: %w", ruleName, err))
+			return
+		}
+		if inc != nil {
+			infractions = append(infractions, *inc)
+		}
 	}
 
 	// 1. Regra de Batidas Esquecidas / Incompletas
 	if settings.Esquecimento {
-		if err := s.checkMissingPunches(collab, todayPunch, currentTime); err != nil {
-			infractions = append(infractions, *err)
-		}
+		inc, err := s.checkMissingPunches(collab, todayPunch, currentTime, esqSev, isClosing)
+		collect("batidas esquecidas", inc, err)
 	}
 
 	// 2. Regra de Intervalo de Almoço Reduzido (Art. 71 CLT)
 	if settings.Almoco {
-		if err := s.checkLunchBreak(todayPunch); err != nil {
-			infractions = append(infractions, *err)
-		}
+		inc, err := s.checkLunchBreak(todayPunch, almocoSev)
+		collect("almoço reduzido", inc, err)
 	}
 
 	// 3. Regra de Interjornada Curta (Art. 66 CLT)
 	if settings.Interjornada && yesterdayPunch != nil {
-		if err := s.checkInterjornada(yesterdayPunch, todayPunch); err != nil {
-			infractions = append(infractions, *err)
-		}
+		inc, err := s.checkInterjornada(yesterdayPunch, todayPunch, interSev)
+		collect("interjornada", inc, err)
 	}
 
-	// 4. Regra de Hora Extra Excedente
+	// 4. Regra de Hora Extra Excedente (Art. 59 CLT) — severidade legal, não configurável.
 	if settings.Hextras {
-		if err := s.checkOvertime(collab, todayPunch); err != nil {
-			infractions = append(infractions, *err)
-		}
+		inc, err := s.checkOvertime(collab, todayPunch)
+		collect("hora extra", inc, err)
 	}
 
-	return infractions
+	// errors.Join devolve nil se ruleErrors estiver vazio.
+	return infractions, errors.Join(ruleErrors...)
+}
+
+// --- Helpers de tempo ---
+
+// parseClock interpreta um horário "HH:MM".
+func parseClock(hhmm string) (time.Time, error) {
+	return time.Parse("15:04", hhmm)
+}
+
+// durationBetween calcula a duração entre dois horários "HH:MM", tratando a virada
+// de meia-noite: se o fim for anterior ao início (ex.: entra 22:00, sai 02:00),
+// assume que o fim está no dia seguinte e soma 24h.
+func durationBetween(start, end time.Time) time.Duration {
+	d := end.Sub(start)
+	if d < 0 {
+		d += 24 * time.Hour
+	}
+	return d
+}
+
+// scheduledTimeOn projeta um horário contratual "HH:MM" na data de `day`,
+// para comparar com o horário atual na varredura intra-dia.
+func scheduledTimeOn(day time.Time, hhmm string) (time.Time, error) {
+	t, err := parseClock(hhmm)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Date(day.Year(), day.Month(), day.Day(), t.Hour(), t.Minute(), 0, 0, day.Location()), nil
+}
+
+// expectedDailyHours calcula a carga contratual diária a partir da jornada prevista
+// do colaborador (dois blocos). Retorna (horas, true) se houver jornada sincronizada.
+func expectedDailyHours(collab *domain.Collaborator) (float64, bool) {
+	if collab == nil || len(collab.Schedules) == 0 {
+		return 0, false
+	}
+	sch := collab.Schedules[0]
+	if sch.Entrada1 == "" || sch.Saida1 == "" || sch.Entrada2 == "" || sch.Saida2 == "" {
+		return 0, false
+	}
+	e1, err := parseClock(sch.Entrada1)
+	if err != nil {
+		return 0, false
+	}
+	s1, err := parseClock(sch.Saida1)
+	if err != nil {
+		return 0, false
+	}
+	e2, err := parseClock(sch.Entrada2)
+	if err != nil {
+		return 0, false
+	}
+	s2, err := parseClock(sch.Saida2)
+	if err != nil {
+		return 0, false
+	}
+	total := durationBetween(e1, s1) + durationBetween(e2, s2)
+	return total.Hours(), true
 }
 
 // --- Métodos Privados com a Matemática das Regras Trabalhistas ---
 
-func (s *AuditorService) checkMissingPunches(collab *domain.Collaborator, punch *domain.DailyPunch, now time.Time) *domain.AuditInconsistency {
+// checkMissingPunches implementa a regra 5.3 da especificação em dois modos:
+//   - Fechamento (isClosing): qualquer contagem ÍMPAR de batidas no dia encerrado
+//     indica batida esquecida (5.3.4).
+//   - Intra-dia (!isClosing): se o colaborador tem só 1 batida (entrada) e já passou
+//     30min do horário previsto de saída para o almoço, é batida esquecida (5.3.3).
+//     Requer jornada contratual sincronizada; sem ela, a regra intra-dia é suspensa.
+func (s *AuditorService) checkMissingPunches(collab *domain.Collaborator, punch *domain.DailyPunch, now time.Time, severity domain.Severity, isClosing bool) (*domain.AuditInconsistency, error) {
 	punchesCount := 0
 	if punch.Entrada1 != nil {
 		punchesCount++
@@ -77,100 +173,150 @@ func (s *AuditorService) checkMissingPunches(collab *domain.Collaborator, punch 
 		punchesCount++
 	}
 
-	// Se o número de batidas for ímpar e já passou das 18h (ou fim de expediente)
-	// Trata-se de uma batida esquecida.
-	if punchesCount%2 != 0 {
+	// Fechamento: contagem ímpar no dia já encerrado = batida esquecida.
+	if isClosing {
+		if punchesCount%2 != 0 {
+			return &domain.AuditInconsistency{
+				CollaboratorID: collab.ID,
+				Type:           "Batida Esquecida",
+				Severity:       severity,
+				Description:    fmt.Sprintf("O colaborador encerrou o dia com número ímpar de marcações (%d batida(s)). Provável esquecimento.", punchesCount),
+			}, nil
+		}
+		return nil, nil
+	}
+
+	// Intra-dia: precisa da jornada contratual para saber o horário previsto do almoço.
+	if len(collab.Schedules) == 0 || collab.Schedules[0].Saida1 == "" {
+		return nil, nil // sem jornada sincronizada, a validação fica suspensa
+	}
+
+	lunchOut, err := scheduledTimeOn(now, collab.Schedules[0].Saida1)
+	if err != nil {
+		return nil, err
+	}
+
+	// Só 1 batida (entrada) e já passou 30min do horário previsto de saída p/ almoço.
+	if punchesCount == 1 && punch.Entrada1 != nil && now.After(lunchOut.Add(30*time.Minute)) {
 		return &domain.AuditInconsistency{
 			CollaboratorID: collab.ID,
 			Type:           "Batida Esquecida",
-			Severity:       domain.SeverityCritical,
-			Description:    fmt.Sprintf("O colaborador possui um número ímpar de marcações (%d batida(s)). Provável esquecimento.", punchesCount),
-		}
+			Severity:       severity,
+			Description:    "O colaborador possui apenas a batida de entrada e já ultrapassou em 30min o horário previsto de saída para o almoço. Provável esquecimento.",
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
-func (s *AuditorService) checkLunchBreak(punch *domain.DailyPunch) *domain.AuditInconsistency {
+func (s *AuditorService) checkLunchBreak(punch *domain.DailyPunch, severity domain.Severity) (*domain.AuditInconsistency, error) {
 	if punch.Saida1 == nil || punch.Entrada2 == nil {
-		return nil // Se não bateu a saída ou a volta do almoço, não avalia intervalo ainda
+		return nil, nil // Se não bateu a saída ou a volta do almoço, não avalia intervalo ainda
 	}
 
-	saida, _ := time.Parse("15:04", *punch.Saida1)
-	volta, _ := time.Parse("15:04", *punch.Entrada2)
+	saida, err := parseClock(*punch.Saida1)
+	if err != nil {
+		return nil, err
+	}
+	volta, err := parseClock(*punch.Entrada2)
+	if err != nil {
+		return nil, err
+	}
 
-	deltaMinutos := volta.Sub(saida).Minutes()
+	deltaMinutos := durationBetween(saida, volta).Minutes()
 
-	// Critério: Período de intervalo para refeição e descanso menor do que 60 minutos[cite: 85].
+	// Critério: Período de intervalo para refeição e descanso menor do que 60 minutos.
 	if deltaMinutos < 60 {
 		return &domain.AuditInconsistency{
 			CollaboratorID: punch.CollaboratorID,
 			Type:           "Almoço Reduzido",
-			Severity:       domain.SeverityCritical,
+			Severity:       severity,
 			Description:    fmt.Sprintf("O intervalo de almoço foi de apenas %.0f minutos, inferior ao limite legal de 60 minutos.", deltaMinutos),
-		}
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
-func (s *AuditorService) checkInterjornada(yesterday *domain.DailyPunch, today *domain.DailyPunch) *domain.AuditInconsistency {
+func (s *AuditorService) checkInterjornada(yesterday *domain.DailyPunch, today *domain.DailyPunch, severity domain.Severity) (*domain.AuditInconsistency, error) {
 	if yesterday.Saida2 == nil || today.Entrada1 == nil {
-		return nil
+		return nil, nil
 	}
 
-	saidaOntem, _ := time.Parse("15:04", *yesterday.Saida2)
-	entradaHoje, _ := time.Parse("15:04", *today.Entrada1)
+	saidaOntem, err := parseClock(*yesterday.Saida2)
+	if err != nil {
+		return nil, err
+	}
+	entradaHoje, err := parseClock(*today.Entrada1)
+	if err != nil {
+		return nil, err
+	}
 
-	// Ajusta as datas fictícias para calcular o delta corretamente entre dias diferentes
-	dataSaida := time.Date(2020, 1, 1, saidaOntem.Hour(), saidaOntem.Minute(), 0, 0, time.UTC)
-	dataEntrada := time.Date(2020, 1, 2, entradaHoje.Hour(), entradaHoje.Minute(), 0, 0, time.UTC)
+	// A interjornada cruza a meia-noite por definição; durationBetween soma 24h.
+	deltaHoras := durationBetween(saidaOntem, entradaHoje).Hours()
 
-	deltaHoras := dataEntrada.Sub(dataSaida).Hours()
-
-	// Critério: Tempo de descanso inferior a 11 horas[cite: 83].
+	// Critério: Tempo de descanso inferior a 11 horas.
 	if deltaHoras < 11 {
 		return &domain.AuditInconsistency{
 			CollaboratorID: today.CollaboratorID,
 			Type:           "Interjornada Curta",
-			Severity:       domain.SeverityCritical,
+			Severity:       severity,
 			Description:    fmt.Sprintf("O descanso entre jornadas foi de apenas %.2f horas. O mínimo exigido são 11 horas.", deltaHoras),
-		}
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
-func (s *AuditorService) checkOvertime(collab *domain.Collaborator, punch *domain.DailyPunch) *domain.AuditInconsistency {
+func (s *AuditorService) checkOvertime(collab *domain.Collaborator, punch *domain.DailyPunch) (*domain.AuditInconsistency, error) {
 	if punch.Entrada1 == nil || punch.Saida1 == nil || punch.Entrada2 == nil || punch.Saida2 == nil {
-		return nil // Jornada incompleta, não calcula hora extra exata ainda
+		return nil, nil // Jornada incompleta, não calcula hora extra exata ainda
 	}
 
-	e1, _ := time.Parse("15:04", *punch.Entrada1)
-	s1, _ := time.Parse("15:04", *punch.Saida1)
-	e2, _ := time.Parse("15:04", *punch.Entrada2)
-	s2, _ := time.Parse("15:04", *punch.Saida2)
+	e1, err := parseClock(*punch.Entrada1)
+	if err != nil {
+		return nil, err
+	}
+	s1, err := parseClock(*punch.Saida1)
+	if err != nil {
+		return nil, err
+	}
+	e2, err := parseClock(*punch.Entrada2)
+	if err != nil {
+		return nil, err
+	}
+	s2, err := parseClock(*punch.Saida2)
+	if err != nil {
+		return nil, err
+	}
 
-	workedHours := s1.Sub(e1).Hours() + s2.Sub(e2).Hours()
+	// Tempo trabalhado líquido (dois blocos), tratando virada de meia-noite.
+	workedHours := (durationBetween(e1, s1) + durationBetween(e2, s2)).Hours()
 
-	// Simplificação: Assumindo jornada padrão de 8 horas para o exemplo
-	standardHours := 8.0
+	// Usa a carga contratual do colaborador; se não sincronizada, cai no padrão de 8h.
+	standardHours := defaultStandardHours
+	if h, ok := expectedDailyHours(collab); ok {
+		standardHours = h
+	}
+
 	overtime := workedHours - standardHours
-
-	if overtime > 0 {
-		// Critério: Ultrapasse o limite de alerta de 1 hora, ou o limite crítico de 2 horas[cite: 90].
-		if overtime > 2.0 {
-			return &domain.AuditInconsistency{
-				CollaboratorID: collab.ID,
-				Type:           "Hora Extra Excedente",
-				Severity:       domain.SeverityCritical,
-				Description:    fmt.Sprintf("Limite legal estourado. O colaborador realizou %.2f horas extras.", overtime),
-			}
-		} else if overtime > 1.0 {
-			return &domain.AuditInconsistency{
-				CollaboratorID: collab.ID,
-				Type:           "Alerta de Hora Extra",
-				Severity:       domain.SeverityAlert,
-				Description:    fmt.Sprintf("Atenção preventiva. O colaborador já realizou %.2f horas extras.", overtime),
-			}
-		}
+	if overtime <= 0 {
+		return nil, nil
 	}
-	return nil
+
+	// Critério (Art. 59 CLT): > 1h e <= 2h => Alerta; > 2h => Crítico.
+	if overtime > 2.0 {
+		return &domain.AuditInconsistency{
+			CollaboratorID: collab.ID,
+			Type:           "Hora Extra Excedente",
+			Severity:       domain.SeverityCritical,
+			Description:    fmt.Sprintf("Limite legal estourado. O colaborador realizou %.2f horas extras.", overtime),
+		}, nil
+	}
+	if overtime > 1.0 {
+		return &domain.AuditInconsistency{
+			CollaboratorID: collab.ID,
+			Type:           "Alerta de Hora Extra",
+			Severity:       domain.SeverityAlert,
+			Description:    fmt.Sprintf("Atenção preventiva. O colaborador já realizou %.2f horas extras.", overtime),
+		}, nil
+	}
+	return nil, nil
 }

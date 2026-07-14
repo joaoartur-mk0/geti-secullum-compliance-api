@@ -163,13 +163,26 @@ Verificação de integridade da infraestrutura (Conexão DB e Broker).
 
 #### 2. `POST /api/v1/tenants`
 Cadastra e inicia o provisionamento assíncrono de um novo cliente.
+
+> **Modelo de credenciais (chave global).** As credenciais de acesso à API SecullumWEB
+> **não** são armazenadas por tenant. Existe **uma única credencial global** (token/usuário),
+> configurada por variável de ambiente no microsserviço, usada para todas as requisições.
+> O que identifica o cliente na Secullum é o `secullum_database_id` (banco selecionado),
+> enviado por requisição. Por isso o cadastro de tenant guarda apenas dados de negócio
+> (nome, id do banco Secullum e o responsável/staff que receberá os alertas).
+
 * **Payload:**
 ```json
 {
-  "company_name": "Empresa Exemplo S.A.",
-  "secullum_api_token": "env_encrypted_token_here",
-  "secullum_client_id": "client_id_uuid"
+  "name": "Empresa Exemplo S.A.",
+  "secullum_database_id": 123,
+  "staff_name": "Fulano de Tal",
+  "staff_contact": "5531999999999"
 }
+```
+* **Comportamento:** cria o tenant, o responsável (staff) e as configurações de regras
+  (`Tenants_Settings`) já com todas as flags em `false` (o cliente as habilita depois pela
+  interface administrativa). As severidades de cada regra também são configuráveis por tenant.
 
 ## Banco de Dados
 
@@ -214,9 +227,15 @@ Table collaborators_schedulle {
 Table Tenants_Settings {
   id integer [primary key]
   tenant_id integer [ref: > tenants.id, not null]
-  almoco boolean [not null]
-  interjornada boolean [not null]
-  hextras boolean [not null]
-  esquecimento boolean [not null]
-  horarios array [not null]
+  almoco boolean [not null, default: false]
+  interjornada boolean [not null, default: false]
+  hextras boolean [not null, default: false]
+  esquecimento boolean [not null, default: false]
+  almoco_severity varchar [not null, default: 'CRITICO']        // ALERTA | CRITICO (configurável por tenant)
+  interjornada_severity varchar [not null, default: 'CRITICO']  // ALERTA | CRITICO
+  esquecimento_severity varchar [not null, default: 'CRITICO']  // ALERTA | CRITICO
+  horarios jsonb [not null]  // ex: ["12:00","14:00","18:30"]
 }
+
+// Nota: a severidade de "hora extra" não é configurável — segue os limiares legais
+// (Art. 59 CLT): > 1h e <= 2h => ALERTA; > 2h => CRITICO.
