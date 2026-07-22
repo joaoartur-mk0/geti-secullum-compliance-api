@@ -1,0 +1,102 @@
+:root {
+  --bg: #0f172a;
+  --card: #ffffff;
+  --line: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --brand: #2563eb;
+  --brand-dark: #1d4ed8;
+  --ok: #16a34a;
+  --err: #dc2626;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: #f1f5f9;
+  color: var(--text);
+}
+
+header {
+  background: var(--bg);
+  color: #fff;
+  padding: 16px 24px;
+}
+header h1 { margin: 0 0 10px; font-size: 20px; font-weight: 600; }
+.tag {
+  font-size: 11px; background: var(--brand); color: #fff;
+  padding: 2px 8px; border-radius: 999px; vertical-align: middle; margin-left: 6px;
+}
+.api-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.api-bar label { font-size: 12px; color: #cbd5e1; }
+.api-bar input { min-width: 260px; }
+
+.dot { width: 12px; height: 12px; border-radius: 50%; background: #64748b; display: inline-block; }
+.dot.ok { background: var(--ok); }
+.dot.err { background: var(--err); }
+
+main { max-width: 960px; margin: 24px auto; padding: 0 16px; display: grid; gap: 16px; }
+
+.card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 18px; box-shadow: 0 1px 2px rgba(0,0,0,.04);
+}
+.card h2 { margin: 0 0 14px; font-size: 16px; }
+.card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.card-head h2 { margin: 0; }
+.actions { display: flex; align-items: center; gap: 10px; }
+
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid label { display: flex; flex-direction: column; font-size: 13px; color: var(--muted); gap: 4px; }
+.grid button[type=submit] { grid-column: 1 / -1; }
+fieldset { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 8px; display: flex; gap: 16px; flex-wrap: wrap; }
+legend { font-size: 12px; color: var(--muted); }
+
+label.inline { flex-direction: row !important; align-items: center; gap: 6px; color: var(--text); }
+
+input, select {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  font-size: 14px; background: #fff; color: var(--text);
+}
+input:focus, select:focus { outline: 2px solid var(--brand); border-color: var(--brand); }
+
+button {
+  padding: 8px 14px; border: none; border-radius: 8px; background: var(--brand);
+  color: #fff; font-size: 14px; font-weight: 500; cursor: pointer;
+}
+button:hover { background: var(--brand-dark); }
+button.ghost { background: #fff; color: var(--brand); border: 1px solid var(--line); }
+button.ghost:hover { background: #f8fafc; }
+button.danger { background: var(--err); }
+button.small { padding: 4px 8px; font-size: 12px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+td .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+.badge.on { background: #dcfce7; color: #166534; }
+.badge.off { background: #fee2e2; color: #991b1b; }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.tab { background: transparent; color: var(--muted); border-radius: 8px 8px 0 0; }
+.tab:hover { background: #f1f5f9; }
+.tab.active { color: var(--brand); border-bottom: 2px solid var(--brand); }
+
+.report { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.report h4 { margin: 0 0 6px; font-size: 14px; }
+.inc { font-size: 13px; padding: 4px 0; border-top: 1px dashed var(--line); }
+.sev-CRITICO { color: var(--err); font-weight: 600; }
+.sev-ALERTA { color: #b45309; font-weight: 600; }
+
+pre#log {
+  background: #0b1220; color: #d1e7ff; padding: 12px; border-radius: 8px;
+  font-size: 12px; max-height: 320px; overflow: auto; white-space: pre-wrap; margin: 0;
+}
+.log-ok { color: #86efac; }
+.log-err { color: #fca5a5; }
+
+.hidden { display: none; }

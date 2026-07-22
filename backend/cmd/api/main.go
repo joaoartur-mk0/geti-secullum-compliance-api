@@ -89,7 +89,7 @@ func main() {
 	// da renovação do token (1h) e do rate limit (100 req/min) automaticamente.
 	secullumBaseURL := os.Getenv("SECULLUM_API_URL")
 	if secullumBaseURL == "" {
-		secullumBaseURL = "https://api.secullum.com.br"
+		secullumBaseURL = "https://pontowebintegracaoexterna.secullum.com.br"
 	}
 	secullumSvc := secullum.NewSecullumClient(secullum.Config{
 		BaseURL:              secullumBaseURL,

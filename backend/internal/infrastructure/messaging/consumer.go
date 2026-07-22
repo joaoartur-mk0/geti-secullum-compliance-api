@@ -37,16 +37,15 @@ func NewAuditConsumer(
 	}
 }
 
-// Start fica escutando a fila infinitamente em background
 func (c *AuditConsumer) Start(ctx context.Context) error {
 	msgs, err := c.channel.Consume(
-		"audit.trigger", // Nome da fila
-		"",              // Consumer tag
-		false,           // Auto-Ack (falso = nós confirmamos manualmente quando terminar)
-		false,           // Exclusive
-		false,           // No-local
-		false,           // No-wait
-		nil,             // Args
+		"audit.trigger",
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
 	)
 	if err != nil {
 		return err
@@ -54,7 +53,6 @@ func (c *AuditConsumer) Start(ctx context.Context) error {
 
 	log.Println("[*] Worker de Auditoria aguardando mensagens...")
 
-	// Loop infinito lendo o canal do Go
 	for {
 		select {
 		case msg := <-msgs:
@@ -66,9 +64,6 @@ func (c *AuditConsumer) Start(ctx context.Context) error {
 	}
 }
 
-// reject rejeita a mensagem e registra caso o próprio Nack falhe, para que
-// nenhuma falha de broker passe despercebida (software auditável).
-// requeue=true devolve a mensagem para nova tentativa; false a descarta.
 func (c *AuditConsumer) reject(msg amqp.Delivery, requeue bool, tenantID int, reason string) {
 	log.Printf("[Rejeitando] Tenant %d: %s (requeue=%v)\n", tenantID, reason, requeue)
 	if err := msg.Nack(false, requeue); err != nil {
@@ -77,12 +72,10 @@ func (c *AuditConsumer) reject(msg amqp.Delivery, requeue bool, tenantID int, re
 }
 
 func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
-	// 1. Decodifica o JSON que veio do Handler HTTP
 	var payload struct {
 		TenantID int `json:"tenant_id"`
 	}
 	if err := json.Unmarshal(msg.Body, &payload); err != nil {
-		// Payload malformado nunca ficará válido em nova tentativa: descarta (requeue=false).
 		c.reject(msg, false, 0, fmt.Sprintf("payload inválido na fila: %v", err))
 		return
 	}

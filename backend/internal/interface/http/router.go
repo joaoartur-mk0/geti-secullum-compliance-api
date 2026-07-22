@@ -6,6 +6,7 @@ import (
 
 	"backend/internal/infrastructure/database/repositories"
 	"backend/internal/interface/http/handlers"
+	"backend/internal/interface/http/middleware"
 	"backend/internal/interface/http/swagger"
 )
 
@@ -15,6 +16,9 @@ import (
 // pois depende da conexão do banco e do broker para reportar o estado real da infra.
 func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher) *gin.Engine {
 	router := gin.Default()
+
+	// CORS de desenvolvimento (permite o painel de testes em outra porta).
+	router.Use(middleware.DevCORS())
 
 	// Repositórios
 	tenantRepo := repositories.NewTenantRepository(db)

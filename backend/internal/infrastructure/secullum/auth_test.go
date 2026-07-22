@@ -28,6 +28,20 @@ func TestTokenManager_AutenticaECacheia(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("método = %s, quer POST", r.Method)
 		}
+		// Contrato OAuth2 da Secullum: form-urlencoded com grant_type e client_id=3.
+		if ct := r.Header.Get("Content-Type"); ct != "application/x-www-form-urlencoded" {
+			t.Errorf("Content-Type = %q, quer application/x-www-form-urlencoded", ct)
+		}
+		_ = r.ParseForm()
+		if r.PostForm.Get("grant_type") != "password" {
+			t.Errorf("grant_type = %q, quer password", r.PostForm.Get("grant_type"))
+		}
+		if r.PostForm.Get("client_id") != "3" {
+			t.Errorf("client_id = %q, quer 3", r.PostForm.Get("client_id"))
+		}
+		if r.PostForm.Get("username") != "elmer" || r.PostForm.Get("password") != "123456" {
+			t.Errorf("username/password não repassados corretamente")
+		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "tok-abc"})
 	}))
 	defer srv.Close()

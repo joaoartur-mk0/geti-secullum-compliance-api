@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -93,10 +94,47 @@ func (c *secullumClient) do(ctx context.Context, method, endpoint string, tenant
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set(headerBancoSelecionado, strconv.Itoa(tenant.SecullumDatabaseID))
 
 	return c.httpClient.Do(req)
+}
+
+// statusError monta um erro incluindo um trecho do corpo da resposta da Secullum,
+// para que o motivo real (token expirado, banco inválido, etc.) apareça no log.
+func statusError(area string, resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("erro na API Secullum (%s): status %d: %s", area, resp.StatusCode, string(body))
+}
+
+// isClock indica se o valor é um horário "HH:MM" válido.
+func isClock(v *string) bool {
+	if v == nil {
+		return false
+	}
+	_, err := time.Parse("15:04", *v)
+	return err == nil
+}
+
+// normalizeTime mantém o horário só se for um "HH:MM" válido; caso contrário (nil ou
+// marcador de abono como "INSS"), devolve nil — ou seja, "sem batida".
+func normalizeTime(v *string) *string {
+	if isClock(v) {
+		return v
+	}
+	return nil
+}
+
+// abonoMarker devolve o primeiro valor não-nulo que NÃO seja um horário (o marcador de
+// abono/afastamento), ou "" se todos os campos forem horário/nulo.
+func abonoMarker(vals ...*string) string {
+	for _, v := range vals {
+		if v != nil && !isClock(v) {
+			return *v
+		}
+	}
+	return ""
 }
 
 // GetDailyPunches extrai as batidas do dia e as "limpa" para o domínio.
@@ -104,7 +142,7 @@ func (c *secullumClient) GetDailyPunches(tenant *domain.Tenant, date time.Time) 
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
-	endpoint := fmt.Sprintf("%s/api/batidas?data=%s", c.baseURL, date.Format("2006-01-02"))
+	endpoint := fmt.Sprintf("%s/IntegracaoExterna/Batidas?DataInicio=%s&DataFim=%s", c.baseURL, date.Format("2006-01-02"), date.Format("2006-01-02"))
 
 	resp, err := c.do(ctx, http.MethodGet, endpoint, tenant)
 	if err != nil {
@@ -113,7 +151,7 @@ func (c *secullumClient) GetDailyPunches(tenant *domain.Tenant, date time.Time) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("erro na API Secullum (batidas): status %d", resp.StatusCode)
+		return nil, statusError("batidas", resp)
 	}
 
 	var rawResponses []secullumPunchResponse
@@ -133,13 +171,21 @@ func (c *secullumClient) GetDailyPunches(tenant *domain.Tenant, date time.Time) 
 			continue
 		}
 
+		// Campos de batida podem trazer um marcador de abono/afastamento (ex.: "INSS",
+		// "FOLGA", "FÉRIAS") em vez de um horário. Isso NÃO é erro de dado: é um dia de
+		// ausência legítima. Registramos como informação e tratamos como "sem batida".
+		if marker := abonoMarker(raw.Entrada1, raw.Saida1, raw.Entrada2, raw.Saida2); marker != "" {
+			log.Printf("[Info Secullum] Funcionário %d em %s: marcador %q (abono/afastamento) — tratado como ausência.",
+				raw.FuncionarioId, parsedDate.Format("2006-01-02"), marker)
+		}
+
 		domainPunches = append(domainPunches, domain.DailyPunch{
 			CollaboratorID: raw.FuncionarioId,
 			Date:           parsedDate,
-			Entrada1:       raw.Entrada1,
-			Saida1:         raw.Saida1,
-			Entrada2:       raw.Entrada2,
-			Saida2:         raw.Saida2,
+			Entrada1:       normalizeTime(raw.Entrada1),
+			Saida1:         normalizeTime(raw.Saida1),
+			Entrada2:       normalizeTime(raw.Entrada2),
+			Saida2:         normalizeTime(raw.Saida2),
 		})
 	}
 
@@ -152,7 +198,7 @@ func (c *secullumClient) GetCollaborators(tenant *domain.Tenant) ([]domain.Colla
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
-	endpoint := fmt.Sprintf("%s/api/funcionarios", c.baseURL)
+	endpoint := fmt.Sprintf("%s/IntegracaoExterna/Funcionarios", c.baseURL)
 
 	resp, err := c.do(ctx, http.MethodGet, endpoint, tenant)
 	if err != nil {
@@ -161,7 +207,7 @@ func (c *secullumClient) GetCollaborators(tenant *domain.Tenant) ([]domain.Colla
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("erro na API Secullum (funcionarios): status %d", resp.StatusCode)
+		return nil, statusError("funcionarios", resp)
 	}
 
 	var rawResponses []secullumFuncionarioResponse

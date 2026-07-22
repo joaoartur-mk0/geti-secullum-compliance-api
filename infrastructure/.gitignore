@@ -1,1 +1,6 @@
+# Variáveis de ambiente com segredos reais — NUNCA versionar.
 .env
+.env.local
+
+# Exceção: o template documentado (sem segredos) DEVE ir para o repo.
+!.env.example

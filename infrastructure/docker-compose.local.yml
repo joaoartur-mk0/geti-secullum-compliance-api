@@ -1,3 +1,15 @@
+# Stack LOCAL de testes: backend + Postgres + RabbitMQ + frontend de testes.
+#
+# Uso:
+#   cd infrastructure
+#   docker compose -f docker-compose.local.yml up -d --build
+#
+#   Frontend de testes: http://localhost:5500
+#   API:                http://localhost:8080  (base URL padrão do painel)
+#   RabbitMQ mgmt:      http://localhost:15672
+#
+# Isolado do docker-compose.yml (nomes/volumes com sufixo -local), então pode rodar
+# sem conflitar com o stack base.
 version: "3.8"
 
 services:
@@ -5,7 +17,7 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    container_name: secullum-compliance-app
+    container_name: secullum-compliance-app-local
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -27,9 +39,26 @@ services:
         condition: service_started
     networks:
       - secullum_network
+
+  # Frontend de testes (arquivos estáticos servidos pelo nginx).
+  # O painel roda no navegador do host e chama a API em http://localhost:8080
+  # (base URL padrão do app.js). O CORS de dev do backend libera essa chamada.
+  frontend:
+    image: nginx:alpine
+    container_name: secullum-compliance-frontend-local
+    restart: unless-stopped
+    ports:
+      - "5500:80"
+    volumes:
+      - ../frontend:/usr/share/nginx/html:ro
+    depends_on:
+      - app
+    networks:
+      - secullum_network
+
   rabbitmq:
     image: rabbitmq:3-management-alpine
-    container_name: secullum-compliance-rabbitmq
+    container_name: secullum-compliance-rabbitmq-local
     restart: unless-stopped
     ports:
       - "5672:5672"
@@ -38,13 +67,13 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq_data_local:/var/lib/rabbitmq
     networks:
       - secullum_network
 
   db:
     image: postgres:15-alpine
-    container_name: secullum-compliance-postgres
+    container_name: secullum-compliance-postgres-local
     restart: unless-stopped
     ports:
       - "5432:5432"
@@ -54,7 +83,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-auditoria_db}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_local:/var/lib/postgresql/data
     networks:
       - secullum_network
     healthcheck:
@@ -68,9 +97,9 @@ services:
       retries: 5
 
 volumes:
-  rabbitmq_data:
+  rabbitmq_data_local:
     driver: local
-  postgres_data:
+  postgres_data_local:
     driver: local
 
 networks:

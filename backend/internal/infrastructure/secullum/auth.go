@@ -1,14 +1,22 @@
 package secullum
 
 import (
-	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
+
+// clientIDPontoWeb é o valor fixo exigido pelo autenticador da Secullum para indicar
+// que a autenticação é destinada ao Ponto Web (conforme documentação de integração).
+const clientIDPontoWeb = "3"
 
 // tokenTTL é a validade assumida do token. A Secullum expira em 1h; usamos uma margem
 // de segurança para renovar antes do vencimento e evitar 401 por corrida de tempo.
@@ -33,13 +41,17 @@ type tokenManager struct {
 	mu        sync.Mutex
 	token     string
 	expiresAt time.Time
+
+	logOnce sync.Once
 }
 
 // get devolve um token válido, renovando-o se necessário.
 func (tm *tokenManager) get(ctx context.Context) (string, error) {
 	if tm.staticToken != "" {
+		tm.logDiagnosticsOnce("static")
 		return tm.staticToken, nil
 	}
+	tm.logDiagnosticsOnce("login")
 
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -59,25 +71,29 @@ func (tm *tokenManager) get(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-// authenticate faz a chamada de autenticação e devolve o access_token.
+// authenticate faz a chamada de autenticação (OAuth2 password grant) e devolve o
+// access_token, conforme a documentação de Integração Ponto Web da Secullum:
+//
+//	POST https://autenticador.secullum.com.br/Token
+//	Content-Type: application/x-www-form-urlencoded
+//	grant_type=password&username=<email>&password=<senha>&client_id=3
 func (tm *tokenManager) authenticate(ctx context.Context) (string, error) {
 	if tm.authURL == "" || tm.username == "" || tm.password == "" {
 		return "", fmt.Errorf("credenciais globais ausentes (authURL/username/password)")
 	}
 
-	body, err := json.Marshal(map[string]string{
-		"username": tm.username,
-		"password": tm.password,
-	})
-	if err != nil {
-		return "", err
-	}
+	form := url.Values{}
+	form.Set("grant_type", "password")
+	form.Set("username", tm.username)
+	form.Set("password", tm.password)
+	form.Set("client_id", clientIDPontoWeb)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tm.authURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tm.authURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := tm.httpClient.Do(req)
 	if err != nil {
@@ -86,7 +102,8 @@ func (tm *tokenManager) authenticate(ctx context.Context) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("status %d na autenticação", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", fmt.Errorf("status %d na autenticação: %s", resp.StatusCode, string(body))
 	}
 
 	var authResp struct {
@@ -100,4 +117,43 @@ func (tm *tokenManager) authenticate(ctx context.Context) (string, error) {
 	}
 
 	return authResp.AccessToken, nil
+}
+
+// logDiagnosticsOnce imprime, uma única vez, o estado da autenticação — para depurar
+// 401 sem vazar o token (loga só tamanho, se parece JWT e a expiração).
+func (tm *tokenManager) logDiagnosticsOnce(mode string) {
+	tm.logOnce.Do(func() {
+		if mode == "static" {
+			t := tm.staticToken
+			log.Printf("[Secullum][auth] modo=TOKEN ESTÁTICO | len=%d | pareceJWT=%v", len(t), strings.HasPrefix(t, "eyJ"))
+			if exp, ok := jwtExpiry(t); ok {
+				log.Printf("[Secullum][auth] token exp=%s | agora=%s | EXPIRADO=%v",
+					exp.Format(time.RFC3339), time.Now().Format(time.RFC3339), time.Now().After(exp))
+			} else {
+				log.Printf("[Secullum][auth] não decodifiquei o claim exp (o valor é um JWT válido?)")
+			}
+			return
+		}
+		log.Printf("[Secullum][auth] modo=LOGIN | authURL definido=%v | username definido=%v | password definido=%v",
+			tm.authURL != "", tm.username != "", tm.password != "")
+	})
+}
+
+// jwtExpiry decodifica (SEM validar assinatura) o claim exp de um JWT.
+func jwtExpiry(token string) (time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(claims.Exp, 0), true
 }

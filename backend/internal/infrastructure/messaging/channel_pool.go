@@ -9,18 +9,6 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// ChannelPool mantém um conjunto fixo e reutilizável de canais AMQP.
-//
-// Por quê: um *amqp.Channel NÃO é seguro para uso concorrente. O Gin executa cada
-// requisição HTTP em sua própria goroutine, então compartilhar um único canal entre
-// handlers intercala frames na mesma conexão, corrompe os contadores internos do canal
-// e faz o broker fechar o canal (CHANNEL_ERROR). A conexão, por outro lado, é segura
-// para compartilhar. O pool resolve isso: cada publicação empresta um canal exclusivo,
-// usa e devolve — nunca dois publishers no mesmo canal ao mesmo tempo.
-//
-// Os canais ficam num buffered channel do Go, que funciona como uma fila thread-safe:
-// Get() retira um canal disponível (bloqueando até haver um ou o contexto expirar) e
-// Put() o devolve. Canais quebrados são recriados sob demanda.
 type ChannelPool struct {
 	conn     *amqp.Connection
 	channels chan *amqp.Channel
