@@ -1,129 +1,14 @@
-<!DOCTYPE html>
-<html lang="pt-br">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Secullum Compliance — Painel de Testes</title>
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <header>
-    <h1>Secullum Compliance <span class="tag">painel de testes</span></h1>
-    <div class="api-bar">
-      <label>API base URL</label>
-      <input id="baseUrl" type="text" value="http://localhost:8080" />
-      <button id="btnHealth" class="ghost">Testar /health</button>
-      <span id="healthDot" class="dot" title="status"></span>
-    </div>
-  </header>
-
-  <main>
-    <!-- Cadastro de tenant -->
-    <section class="card">
-      <h2>Cadastrar tenant</h2>
-      <form id="formTenant" class="grid">
-        <label>Nome<input name="name" required placeholder="Empresa Exemplo S.A." /></label>
-        <label>Secullum Database ID<input name="secullum_database_id" type="number" required placeholder="123" /></label>
-        <label>Responsável (nome)<input name="staff_name" required placeholder="Fulano de Tal" /></label>
-        <label>Responsável (celular)<input name="staff_contact" required placeholder="5531999999999" /></label>
-        <button type="submit">Cadastrar</button>
-      </form>
-    </section>
-
-    <!-- Lista de tenants -->
-    <section class="card">
-      <div class="card-head">
-        <h2>Tenants</h2>
-        <div class="actions">
-          <label class="inline"><input id="includeInactive" type="checkbox" /> incluir inativos</label>
-          <button id="btnListTenants" class="ghost">Atualizar lista</button>
-        </div>
-      </div>
-      <table id="tenantsTable">
-        <thead>
-          <tr><th>ID</th><th>Nome</th><th>Secullum DB</th><th>Ativo</th><th>Ações</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </section>
-
-    <!-- Detalhe do tenant selecionado -->
-    <section class="card hidden" id="detailCard">
-      <div class="card-head">
-        <h2>Tenant selecionado: <span id="selTenantLabel"></span></h2>
-        <button id="btnTrigger" class="ghost">Disparar auditoria</button>
-      </div>
-
-      <nav class="tabs">
-        <button class="tab active" data-tab="staffs">Responsáveis</button>
-        <button class="tab" data-tab="settings">Configurações</button>
-        <button class="tab" data-tab="reports">Relatórios</button>
-        <button class="tab" data-tab="edit">Editar tenant</button>
-      </nav>
-
-      <!-- Aba: staffs -->
-      <div class="tabpane" data-pane="staffs">
-        <form id="formStaff" class="grid">
-          <label>Nome<input name="name" required placeholder="Nome do responsável" /></label>
-          <label>Celular<input name="celular" required placeholder="5531999999999" /></label>
-          <button type="submit">Adicionar responsável</button>
-        </form>
-        <table id="staffsTable">
-          <thead><tr><th>ID</th><th>Nome</th><th>Celular</th><th>Ações</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-
-      <!-- Aba: settings -->
-      <div class="tabpane hidden" data-pane="settings">
-        <form id="formSettings" class="grid">
-          <fieldset>
-            <legend>Regras habilitadas</legend>
-            <label class="inline"><input type="checkbox" name="almoco" /> Almoço</label>
-            <label class="inline"><input type="checkbox" name="interjornada" /> Interjornada</label>
-            <label class="inline"><input type="checkbox" name="hextras" /> Hora extra</label>
-            <label class="inline"><input type="checkbox" name="esquecimento" /> Esquecimento</label>
-          </fieldset>
-          <label>Severidade almoço
-            <select name="almoco_severity"><option value="">(default)</option><option>ALERTA</option><option>CRITICO</option></select>
-          </label>
-          <label>Severidade interjornada
-            <select name="interjornada_severity"><option value="">(default)</option><option>ALERTA</option><option>CRITICO</option></select>
-          </label>
-          <label>Severidade esquecimento
-            <select name="esquecimento_severity"><option value="">(default)</option><option>ALERTA</option><option>CRITICO</option></select>
-          </label>
-          <label>Horários (separados por vírgula)<input name="horarios" placeholder="12:00, 14:00, 18:30" /></label>
-          <button type="submit">Salvar configurações</button>
-        </form>
-      </div>
-
-      <!-- Aba: reports -->
-      <div class="tabpane hidden" data-pane="reports">
-        <button id="btnListReports" class="ghost">Atualizar relatórios</button>
-        <div id="reportsList"></div>
-      </div>
-
-      <!-- Aba: editar tenant -->
-      <div class="tabpane hidden" data-pane="edit">
-        <form id="formEditTenant" class="grid">
-          <label>Nome<input name="name" required /></label>
-          <label>Secullum Database ID<input name="secullum_database_id" type="number" required /></label>
-          <button type="submit">Salvar alterações</button>
-        </form>
-      </div>
-    </section>
-
-    <!-- Log de requisições -->
-    <section class="card">
-      <div class="card-head">
-        <h2>Log</h2>
-        <button id="btnClearLog" class="ghost">Limpar</button>
-      </div>
-      <pre id="log"></pre>
-    </section>
-  </main>
-
-  <script src="app.js"></script>
-</body>
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#2b2620" />
+    <title>Secullum Compliance · Geti</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

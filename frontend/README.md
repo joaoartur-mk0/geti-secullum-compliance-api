@@ -1,42 +1,57 @@
-# Painel de Testes (frontend)
+# Frontend — Interface Administrativa
 
-Frontend estático (HTML + CSS + JS puro, **sem build/npm**) para demonstrar os cadastros
-e operações do backend: tenants, responsáveis (staff), configurações, relatórios e disparo
-de auditoria.
+Painel de gestão do Secullum Compliance (Vite + React + TypeScript + Tailwind v4), conforme a
+stack definida em `docs/00_Automation_Engineering_Documentation.md`. Substituiu o painel
+estático de testes do backend que vivia nesta pasta (o histórico dele fica no git).
 
-## Como rodar
-
-Sirva a pasta com qualquer servidor estático e abra no navegador. Exemplos:
+## Rodar em desenvolvimento (HMR)
 
 ```bash
-# opção 1: Python
 cd frontend
-python3 -m http.server 5500
-# abra http://localhost:5500
-
-# opção 2: VS Code -> extensão "Live Server" -> "Go Live"
+npm install
+npm run dev
+# abre http://localhost:5173
 ```
 
-No topo da página, ajuste a **API base URL** (padrão `http://localhost:8080`) e clique em
-**Testar /health**.
+Pré-requisito: backend no ar (`docker compose -f docker-compose.local.yml up -d` em
+`infrastructure/`). A base URL padrão é `http://localhost:8080` e pode ser trocada na tela de
+login em "Configuração avançada" (fica salva no navegador).
 
-## Pré-requisitos no backend
+## Servir pelo compose local (porta 5500)
 
-1. **Backend no ar** (`docker compose up -d` em `infrastructure/`).
-2. **CORS liberado** para desenvolvimento. Como o frontend roda em outra porta
-   (ex.: 5500) e chama a API na 8080, o navegador exige cabeçalhos CORS. Sem eles,
-   as requisições `POST/PUT` falham no preflight. Há um middleware de CORS de
-   desenvolvimento no backend para isso (`interface/http/middleware`).
+O serviço `frontend` do `docker-compose.local.yml` builda a imagem sozinho (multi-stage:
+Node compila o Vite, nginx serve o resultado com fallback de SPA — ver `Dockerfile` e
+`nginx.conf` nesta pasta):
 
-> Alternativa sem CORS: servir estes arquivos estáticos pelo próprio backend (mesma
-> origem). Hoje o demo assume frontend e backend em origens separadas.
+```bash
+cd infrastructure
+docker compose -f docker-compose.local.yml up -d --build
+# abre http://localhost:5500
+```
 
-## O que dá para testar
+Depois de mudar o código, repita o `up -d --build` para reconstruir a imagem.
 
-- **Tenants:** cadastrar, listar (com/sem inativos), abrir, editar, desativar.
-- **Responsáveis:** adicionar, listar, editar, excluir.
-- **Configurações:** carregar, alterar flags/severidades/horários e salvar.
-- **Relatórios:** listar os relatórios de auditoria do tenant.
-- **Auditoria:** disparar (`POST /audit/trigger`).
+## O que está implementado
 
-Todas as requisições e respostas aparecem no **Log** no rodapé — útil para a apresentação.
+- **Login** — provisório (aceita qualquer credencial e guarda sessão no `localStorage`).
+  Troca por autenticação real quando o backend ganhar o modo multiempresa.
+- **Primeiro acesso** — se não há tenant cadastrado, o painel guia o cadastro da empresa
+  (`POST /tenants`).
+- **Painel** — saúde da infra (`/health`), disparo de auditoria (`POST /audit/trigger`) e
+  relatórios com inconsistências e severidades (`GET /tenants/{id}/reports`).
+- **Gestores** — CRUD completo de responsáveis (`/tenants/{id}/staffs`, `/staffs/{id}`).
+- **Avisos** — flags, severidades e horários de varredura (`/tenants/{id}/settings`).
+- **WhatsApp** — fluxo de conexão com a Evolution API **simulado** (o backend ainda não expõe
+  esses endpoints); o estado vive só no navegador, marcado como prévia na própria tela.
+
+## Estrutura
+
+```
+src/
+├─ lib/          # api.ts (client tipado do swagger), types.ts, session.ts, format.ts
+├─ components/   # ui.tsx (Button, Field, Toggle, badges, toasts, estados)
+├─ layouts/      # AppShell.tsx (sidebar desktop + nav inferior mobile, contexto do tenant)
+└─ pages/        # Login, Painel, Gestores, Avisos, WhatsApp
+```
+
+Design tokens (OKLCH) em `src/index.css`; diretrizes estratégicas em `../PRODUCT.md`.

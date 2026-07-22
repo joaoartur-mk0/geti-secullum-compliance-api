@@ -1,12 +1,14 @@
-# Stack LOCAL de testes: backend + Postgres + RabbitMQ + frontend de testes.
+# Stack LOCAL de testes: backend + Postgres + RabbitMQ + frontend (painel administrativo).
 #
 # Uso:
 #   cd infrastructure
 #   docker compose -f docker-compose.local.yml up -d --build
 #
-#   Frontend de testes: http://localhost:5500
+#   Painel:             http://localhost:5500
 #   API:                http://localhost:8080  (base URL padrão do painel)
 #   RabbitMQ mgmt:      http://localhost:15672
+#
+# Para desenvolvimento do painel com HMR, prefira `npm run dev` em frontend/ (porta 5173).
 #
 # Isolado do docker-compose.yml (nomes/volumes com sufixo -local), então pode rodar
 # sem conflitar com o stack base.
@@ -40,17 +42,17 @@ services:
     networks:
       - secullum_network
 
-  # Frontend de testes (arquivos estáticos servidos pelo nginx).
+  # Painel administrativo: build multi-stage (Node -> nginx) feito pelo próprio compose.
   # O painel roda no navegador do host e chama a API em http://localhost:8080
-  # (base URL padrão do app.js). O CORS de dev do backend libera essa chamada.
+  # (configurável na tela de login). O CORS de dev do backend libera essa chamada.
   frontend:
-    image: nginx:alpine
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
     container_name: secullum-compliance-frontend-local
     restart: unless-stopped
     ports:
       - "5500:80"
-    volumes:
-      - ../frontend:/usr/share/nginx/html:ro
     depends_on:
       - app
     networks:
