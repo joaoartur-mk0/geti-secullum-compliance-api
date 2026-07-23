@@ -19,7 +19,9 @@ import type { Tenant } from '../lib/types'
 
 interface TenantContextValue {
   tenant: Tenant
+  tenants: Tenant[]
   reloadTenant: () => void
+  switchTenant: (id: number) => void
 }
 
 const TenantContext = createContext<TenantContextValue | null>(null)
@@ -44,7 +46,7 @@ type TenantState =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
   | { phase: 'empty' }
-  | { phase: 'ready'; tenant: Tenant }
+  | { phase: 'ready'; tenant: Tenant; tenants: Tenant[] }
 
 export default function AppShell() {
   const session = getSession()
@@ -62,13 +64,23 @@ export default function AppShell() {
       const savedId = getSavedTenantId()
       const tenant = tenants.find((t) => t.id === savedId) ?? tenants[0]
       saveTenantId(tenant.id)
-      setState({ phase: 'ready', tenant })
+      setState({ phase: 'ready', tenant, tenants })
     } catch (error) {
       setState({
         phase: 'error',
         message: error instanceof ApiError ? error.message : 'Erro inesperado ao carregar a empresa.',
       })
     }
+  }, [])
+
+  const switchTenant = useCallback((id: number) => {
+    setState((current) => {
+      if (current.phase !== 'ready') return current
+      const next = current.tenants.find((t) => t.id === id)
+      if (!next) return current
+      saveTenantId(next.id)
+      return { ...current, tenant: next }
+    })
   }, [])
 
   useEffect(() => {
@@ -117,12 +129,29 @@ export default function AppShell() {
         </nav>
 
         <div className="border-t border-side-raise px-5 py-4">
-          {state.phase === 'ready' && (
-            <p className="mb-2 flex items-center gap-2 text-xs text-side-faint">
-              <Building2 size={14} aria-hidden />
-              <span className="truncate">{state.tenant.name}</span>
-            </p>
-          )}
+          {state.phase === 'ready' &&
+            (state.tenants.length > 1 ? (
+              <label className="mb-2 flex items-center gap-2 text-xs text-side-faint">
+                <Building2 size={14} className="shrink-0" aria-hidden />
+                <span className="sr-only">Empresa em consulta</span>
+                <select
+                  value={state.tenant.id}
+                  onChange={(e) => switchTenant(Number(e.target.value))}
+                  className="min-h-9 w-full truncate rounded-field border border-side-raise bg-side-raise px-2 text-xs font-medium text-side-ink transition-colors duration-150 hover:text-white"
+                >
+                  {state.tenants.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <p className="mb-2 flex items-center gap-2 text-xs text-side-faint">
+                <Building2 size={14} aria-hidden />
+                <span className="truncate">{state.tenant.name}</span>
+              </p>
+            ))}
           <p className="truncate text-xs text-side-faint">{session.email}</p>
           <button
             type="button"
@@ -169,7 +198,14 @@ export default function AppShell() {
           {state.phase === 'error' && <ErrorNote message={state.message} onRetry={loadTenant} />}
           {state.phase === 'empty' && <CreateTenantCard onCreated={loadTenant} />}
           {state.phase === 'ready' && (
-            <TenantContext.Provider value={{ tenant: state.tenant, reloadTenant: loadTenant }}>
+            <TenantContext.Provider
+              value={{
+                tenant: state.tenant,
+                tenants: state.tenants,
+                reloadTenant: loadTenant,
+                switchTenant,
+              }}
+            >
               <Outlet />
             </TenantContext.Provider>
           )}

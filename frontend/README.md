@@ -42,7 +42,9 @@ Depois de mudar o código, repita o `up -d --build` para reconstruir a imagem.
 - **Gestores** — CRUD completo de responsáveis (`/tenants/{id}/staffs`, `/staffs/{id}`).
 - **Avisos** — flags, severidades e horários de varredura (`/tenants/{id}/settings`).
 - **Empresa** — corrigir nome e ID do banco Secullum (`PUT /tenants/{id}`), evitando reset de
-  banco se o dado foi cadastrado errado no setup.
+  banco se o dado foi cadastrado errado no setup; e prévia do modo multiempresa: lista as
+  empresas do acesso, alterna qual está em consulta (seletor também na sidebar) e cadastra
+  novas (`POST /tenants`). A empresa em consulta fica salva no navegador.
 - **WhatsApp** — fluxo de conexão com a Evolution API **simulado** (o backend ainda não expõe
   esses endpoints); o estado vive só no navegador, marcado como prévia na própria tela.
 
