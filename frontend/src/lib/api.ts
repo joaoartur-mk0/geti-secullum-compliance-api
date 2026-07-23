@@ -83,6 +83,12 @@ export const api = {
 
   getTenant: (id: number) => request<{ tenant: Tenant }>(`/api/v1/tenants/${id}`).then((r) => r.tenant),
 
+  updateTenant: (id: number, body: { name: string; secullum_database_id: number }) =>
+    request<{ message: string }>(`/api/v1/tenants/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
   getSettings: (tenantId: number) =>
     request<{ settings: Settings }>(`/api/v1/tenants/${tenantId}/settings`).then((r) => r.settings),
 

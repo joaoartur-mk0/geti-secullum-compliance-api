@@ -37,6 +37,7 @@ const navItems = [
   { to: '/gestores', label: 'Gestores', icon: Users, end: false },
   { to: '/avisos', label: 'Avisos', icon: Bell, end: false },
   { to: '/whatsapp', label: 'WhatsApp', icon: MessageCircle, end: false },
+  { to: '/empresa', label: 'Empresa', icon: Building2, end: false },
 ]
 
 type TenantState =

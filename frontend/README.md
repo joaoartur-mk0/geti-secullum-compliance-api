@@ -41,6 +41,8 @@ Depois de mudar o código, repita o `up -d --build` para reconstruir a imagem.
   relatórios com inconsistências e severidades (`GET /tenants/{id}/reports`).
 - **Gestores** — CRUD completo de responsáveis (`/tenants/{id}/staffs`, `/staffs/{id}`).
 - **Avisos** — flags, severidades e horários de varredura (`/tenants/{id}/settings`).
+- **Empresa** — corrigir nome e ID do banco Secullum (`PUT /tenants/{id}`), evitando reset de
+  banco se o dado foi cadastrado errado no setup.
 - **WhatsApp** — fluxo de conexão com a Evolution API **simulado** (o backend ainda não expõe
   esses endpoints); o estado vive só no navegador, marcado como prévia na própria tela.
 

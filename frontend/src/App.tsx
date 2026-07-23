@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { ToastProvider } from './components/ui'
 import AppShell from './layouts/AppShell'
 import Avisos from './pages/Avisos'
+import Empresa from './pages/Empresa'
 import Gestores from './pages/Gestores'
 import Login from './pages/Login'
 import Painel from './pages/Painel'
@@ -18,6 +19,7 @@ export default function App() {
             <Route path="gestores" element={<Gestores />} />
             <Route path="avisos" element={<Avisos />} />
             <Route path="whatsapp" element={<WhatsApp />} />
+            <Route path="empresa" element={<Empresa />} />
           </Route>
         </Routes>
       </BrowserRouter>
