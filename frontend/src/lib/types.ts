@@ -48,6 +48,22 @@ export interface AuditInconsistency {
   Description: string
 }
 
+// ReportMetrics: indicadores operacionais consolidados de uma varredura.
+// AINDA NÃO EXISTE NO BACKEND — ver docs/03_Metrics_Frontend_Contract.md. A aba Indicadores
+// já consome este objeto quando ele estiver presente no relatório; enquanto não
+// estiver, a aba deriva o que consegue da lista de `inconsistencies`.
+export interface ReportMetrics {
+  collaborators_audited: number // nº de colaboradores avaliados na varredura
+  clean_count: number // colaboradores sem nenhuma inconsistência
+  compliance_rate: number // 0–100 = clean_count / collaborators_audited * 100
+  total_inconsistencies: number
+  critical: number // inconsistências de severidade CRITICO
+  alert: number // inconsistências de severidade ALERTA
+  by_type: Record<string, number> // { "Batida Esquecida": 3, "Almoço Reduzido": 1, ... }
+  overtime_hours_total: number // soma das horas extras do dia (horas)
+  late_hours_total: number // soma dos atrasos do dia (horas)
+}
+
 export interface Report {
   id: number
   tenant_id: number
@@ -55,6 +71,7 @@ export interface Report {
   data_generated: string
   total: number
   inconsistencies: AuditInconsistency[] | null
+  metrics?: ReportMetrics | null // preenchido pelo backend quando a varredura completa entrar
 }
 
 export interface HealthResponse {
