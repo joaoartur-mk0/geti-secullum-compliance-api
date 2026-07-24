@@ -27,6 +27,7 @@ func TestSetupRouter_RegistraRotasSemConflito(t *testing.T) {
 		"GET /api/v1/tenants/:id",
 		"PUT /api/v1/tenants/:id",
 		"PATCH /api/v1/tenants/:id/deactivate",
+		"POST /api/v1/tenants/:id/sync",
 		"GET /api/v1/tenants/:id/settings",
 		"PUT /api/v1/tenants/:id/settings",
 		"GET /api/v1/tenants/:id/staffs",

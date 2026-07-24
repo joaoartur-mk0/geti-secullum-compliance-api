@@ -120,34 +120,51 @@ func scheduledTimeOn(day time.Time, hhmm string) (time.Time, error) {
 	return time.Date(day.Year(), day.Month(), day.Day(), t.Hour(), t.Minute(), 0, 0, day.Location()), nil
 }
 
-// expectedDailyHours calcula a carga contratual diária a partir da jornada prevista
-// do colaborador (dois blocos). Retorna (horas, true) se houver jornada sincronizada.
-func expectedDailyHours(collab *domain.Collaborator) (float64, bool) {
-	if collab == nil || len(collab.Schedules) == 0 {
+// scheduleForDate encontra, dentre as jornadas sincronizadas do colaborador, a que
+// corresponde ao dia da semana de `date`. A Secullum define a jornada por dia (0 a 6,
+// mesma convenção do time.Weekday do Go), então sábados/domingos/feriados podem ter
+// cargas diferentes dos dias úteis.
+func scheduleForDate(collab *domain.Collaborator, date time.Time) (domain.CollaboratorSchedule, bool) {
+	if collab == nil {
+		return domain.CollaboratorSchedule{}, false
+	}
+	weekday := int(date.Weekday())
+	for _, s := range collab.Schedules {
+		if s.DiaSemana == weekday {
+			return s, true
+		}
+	}
+	return domain.CollaboratorSchedule{}, false
+}
+
+// expectedDailyHours calcula a carga contratual do dia da semana de `date`.
+//
+// Prioriza CargaMinutos (o valor já calculado pela Secullum, mais confiável que
+// recomputar a partir dos horários — considera tolerâncias e outras regras do
+// horário). Se ausente, tenta somar os dois blocos Entrada/Saída. Se a jornada não foi
+// sincronizada para este dia da semana, devolve ok=false (o chamador aplica um
+// fallback). Um dia sincronizado como folga contratual (Carga=0, sem horários) devolve
+// corretamente 0h esperadas — qualquer trabalho nesse dia conta inteiro como extra.
+func expectedDailyHours(collab *domain.Collaborator, date time.Time) (float64, bool) {
+	sch, ok := scheduleForDate(collab, date)
+	if !ok {
 		return 0, false
 	}
-	sch := collab.Schedules[0]
-	if sch.Entrada1 == "" || sch.Saida1 == "" || sch.Entrada2 == "" || sch.Saida2 == "" {
-		return 0, false
+	if sch.CargaMinutos > 0 {
+		return float64(sch.CargaMinutos) / 60.0, true
 	}
-	e1, err := parseClock(sch.Entrada1)
-	if err != nil {
-		return 0, false
+	if sch.Entrada1 != "" && sch.Saida1 != "" && sch.Entrada2 != "" && sch.Saida2 != "" {
+		e1, err1 := parseClock(sch.Entrada1)
+		s1, err2 := parseClock(sch.Saida1)
+		e2, err3 := parseClock(sch.Entrada2)
+		s2, err4 := parseClock(sch.Saida2)
+		if err1 == nil && err2 == nil && err3 == nil && err4 == nil {
+			total := durationBetween(e1, s1) + durationBetween(e2, s2)
+			return total.Hours(), true
+		}
 	}
-	s1, err := parseClock(sch.Saida1)
-	if err != nil {
-		return 0, false
-	}
-	e2, err := parseClock(sch.Entrada2)
-	if err != nil {
-		return 0, false
-	}
-	s2, err := parseClock(sch.Saida2)
-	if err != nil {
-		return 0, false
-	}
-	total := durationBetween(e1, s1) + durationBetween(e2, s2)
-	return total.Hours(), true
+	// Dia sincronizado sem carga e sem horários: folga contratual (0h esperadas).
+	return 0, true
 }
 
 // --- Métodos Privados com a Matemática das Regras Trabalhistas ---
@@ -186,12 +203,14 @@ func (s *AuditorService) checkMissingPunches(collab *domain.Collaborator, punch 
 		return nil, nil
 	}
 
-	// Intra-dia: precisa da jornada contratual para saber o horário previsto do almoço.
-	if len(collab.Schedules) == 0 || collab.Schedules[0].Saida1 == "" {
-		return nil, nil // sem jornada sincronizada, a validação fica suspensa
+	// Intra-dia: precisa da jornada contratual do dia (de hoje) para saber o horário
+	// previsto do almoço.
+	sch, ok := scheduleForDate(collab, now)
+	if !ok || sch.Saida1 == "" {
+		return nil, nil // sem jornada sincronizada para hoje, a validação fica suspensa
 	}
 
-	lunchOut, err := scheduledTimeOn(now, collab.Schedules[0].Saida1)
+	lunchOut, err := scheduledTimeOn(now, sch.Saida1)
 	if err != nil {
 		return nil, err
 	}
@@ -290,9 +309,10 @@ func (s *AuditorService) checkOvertime(collab *domain.Collaborator, punch *domai
 	// Tempo trabalhado líquido (dois blocos), tratando virada de meia-noite.
 	workedHours := (durationBetween(e1, s1) + durationBetween(e2, s2)).Hours()
 
-	// Usa a carga contratual do colaborador; se não sincronizada, cai no padrão de 8h.
+	// Usa a carga contratual do dia da semana avaliado; se não sincronizada, cai no
+	// padrão de 8h.
 	standardHours := defaultStandardHours
-	if h, ok := expectedDailyHours(collab); ok {
+	if h, ok := expectedDailyHours(collab, punch.Date); ok {
 		standardHours = h
 	}
 

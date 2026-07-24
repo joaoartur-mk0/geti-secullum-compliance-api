@@ -29,6 +29,57 @@ func findByType(list []domain.AuditInconsistency, t string) (domain.AuditInconsi
 	return domain.AuditInconsistency{}, false
 }
 
+func TestExpectedDailyHours(t *testing.T) {
+	date := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC) // dia da semana fixo para o teste
+	weekday := int(date.Weekday())
+
+	t.Run("sem jornada sincronizada para o dia", func(t *testing.T) {
+		collab := &domain.Collaborator{}
+		if _, ok := expectedDailyHours(collab, date); ok {
+			t.Errorf("esperava ok=false sem Schedules")
+		}
+	})
+
+	t.Run("usa CargaMinutos quando presente", func(t *testing.T) {
+		collab := &domain.Collaborator{Schedules: []domain.CollaboratorSchedule{
+			{DiaSemana: weekday, CargaMinutos: 440}, // 7h20 — vem calculado pela Secullum
+		}}
+		h, ok := expectedDailyHours(collab, date)
+		if !ok || h != 440.0/60.0 {
+			t.Errorf("h=%.4f ok=%v, quer %.4f/true", h, ok, 440.0/60.0)
+		}
+	})
+
+	t.Run("calcula dos horários quando não há CargaMinutos", func(t *testing.T) {
+		collab := &domain.Collaborator{Schedules: []domain.CollaboratorSchedule{
+			{DiaSemana: weekday, Entrada1: "08:00", Saida1: "12:00", Entrada2: "13:00", Saida2: "17:00"},
+		}}
+		h, ok := expectedDailyHours(collab, date)
+		if !ok || h != 8.0 {
+			t.Errorf("h=%.2f ok=%v, quer 8.00/true", h, ok)
+		}
+	})
+
+	t.Run("folga contratual (Carga=0, sem horários) => 0h esperadas", func(t *testing.T) {
+		collab := &domain.Collaborator{Schedules: []domain.CollaboratorSchedule{
+			{DiaSemana: weekday}, // dia sincronizado, mas sem carga nem horários = folga
+		}}
+		h, ok := expectedDailyHours(collab, date)
+		if !ok || h != 0 {
+			t.Errorf("h=%.2f ok=%v, quer 0.00/true (folga => qualquer trabalho vira extra)", h, ok)
+		}
+	})
+
+	t.Run("dia da semana errado não casa", func(t *testing.T) {
+		collab := &domain.Collaborator{Schedules: []domain.CollaboratorSchedule{
+			{DiaSemana: (weekday + 1) % 7, CargaMinutos: 440},
+		}}
+		if _, ok := expectedDailyHours(collab, date); ok {
+			t.Errorf("esperava ok=false: jornada é de outro dia da semana")
+		}
+	})
+}
+
 func TestDurationBetween_CruzaMeiaNoite(t *testing.T) {
 	parse := func(s string) time.Time {
 		tm, err := parseClock(s)
@@ -158,15 +209,20 @@ func TestProcessRules_InterjornadaOk(t *testing.T) {
 
 func TestProcessRules_HoraExtraUsaCargaContratual(t *testing.T) {
 	s := NewAuditorService()
-	// Jornada contratual de 6h (08-12 / 13-15).
+	// A jornada é por dia da semana; o punch precisa cair no mesmo DiaSemana da
+	// jornada sincronizada para o auditor encontrá-la.
+	date := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+
+	// Jornada contratual de 6h (08-12 / 13-15) nesse dia da semana.
 	collab := &domain.Collaborator{
 		ID: 1,
 		Schedules: []domain.CollaboratorSchedule{
-			{Entrada1: "08:00", Saida1: "12:00", Entrada2: "13:00", Saida2: "15:00"},
+			{DiaSemana: int(date.Weekday()), Entrada1: "08:00", Saida1: "12:00", Entrada2: "13:00", Saida2: "15:00"},
 		},
 	}
 	// Trabalhou 7.5h (08-12 / 13-16:30) => 1.5h extra sobre a carga de 6h.
 	punch := &domain.DailyPunch{
+		Date:     date,
 		Entrada1: strPtr("08:00"),
 		Saida1:   strPtr("12:00"),
 		Entrada2: strPtr("13:00"),
@@ -232,13 +288,17 @@ func TestProcessRules_ContagemImparApenasNoFechamento(t *testing.T) {
 
 func TestProcessRules_EsquecimentoIntraDiaComJornada(t *testing.T) {
 	s := NewAuditorService()
-	collab := &domain.Collaborator{
-		ID:        1,
-		Schedules: []domain.CollaboratorSchedule{{Entrada1: "08:00", Saida1: "12:00", Entrada2: "13:00", Saida2: "17:00"}},
-	}
 	// Só entrada batida; agora são 12:45 (passou 30min da saída p/ almoço de 12:00).
 	punch := &domain.DailyPunch{CollaboratorID: 1, Entrada1: strPtr("08:00")}
 	now := time.Date(2026, 7, 13, 12, 45, 0, 0, time.Local)
+
+	// A jornada é por dia da semana; precisa bater com o DiaSemana de `now`.
+	collab := &domain.Collaborator{
+		ID: 1,
+		Schedules: []domain.CollaboratorSchedule{
+			{DiaSemana: int(now.Weekday()), Entrada1: "08:00", Saida1: "12:00", Entrada2: "13:00", Saida2: "17:00"},
+		},
+	}
 
 	inc, err := s.ProcessRules(&domain.TenantSettings{Esquecimento: true}, collab, punch, nil, now, false)
 	if err != nil {

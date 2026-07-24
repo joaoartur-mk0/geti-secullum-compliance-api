@@ -49,4 +49,7 @@ type ReportRepository interface {
 type SecullumService interface {
 	GetDailyPunches(tenant *Tenant, date time.Time) ([]DailyPunch, error)
 	GetCollaborators(tenant *Tenant) ([]Collaborator, error)
+	// GetHorario busca a jornada contratual (por dia da semana) associada ao número de
+	// horário do funcionário na Secullum (Funcionario.Horario.Numero).
+	GetHorario(tenant *Tenant, numero int) ([]CollaboratorSchedule, error)
 }

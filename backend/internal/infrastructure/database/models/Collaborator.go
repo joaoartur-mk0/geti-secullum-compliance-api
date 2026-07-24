@@ -2,8 +2,9 @@ package models
 
 type Collaborator struct {
 	ID         int    `gorm:"primaryKey;autoIncrement" json:"id"`
-	TenantID   int    `gorm:"not null;index" json:"tenant_id"`
-	SecullumID int    `gorm:"not null;index" json:"secullum_id"`
+	TenantID   int    `gorm:"not null;uniqueIndex:idx_collaborator_tenant_secullum" json:"tenant_id"`
+	SecullumID int    `gorm:"not null;uniqueIndex:idx_collaborator_tenant_secullum" json:"secullum_id"`
+	Name       string `gorm:"type:varchar(255)" json:"name"`
 	Cpf        string `gorm:"type:varchar(20)" json:"cpf"`
 	Celular    string `gorm:"type:varchar(20)" json:"celular"`
 
@@ -14,8 +15,10 @@ type Collaborator struct {
 type CollaboratorSchedule struct {
 	ID             int    `gorm:"primaryKey;autoIncrement" json:"id"`
 	CollaboratorID int    `gorm:"not null;index" json:"collaborator_id"`
-	Entrada1       string `gorm:"type:time" json:"entrada_1"` // GORM converterá "15:04:05" para TIME no Postgres
-	Saida1         string `gorm:"type:time" json:"saida_1"`
-	Entrada2       string `gorm:"type:time" json:"entrada_2"`
-	Saida2         string `gorm:"type:time" json:"saida_2"`
+	DiaSemana      int    `gorm:"not null" json:"dia_semana"` // 0=Domingo ... 6=Sábado (mesma convenção do time.Weekday)
+	Entrada1       string `gorm:"type:varchar(5)" json:"entrada_1"`
+	Saida1         string `gorm:"type:varchar(5)" json:"saida_1"`
+	Entrada2       string `gorm:"type:varchar(5)" json:"entrada_2"`
+	Saida2         string `gorm:"type:varchar(5)" json:"saida_2"`
+	CargaMinutos   int    `gorm:"not null;default:0" json:"carga_minutos"`
 }

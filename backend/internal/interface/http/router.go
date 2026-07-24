@@ -30,7 +30,7 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher) *gin.Engine {
 
 	// Handlers
 	auditHandler := handlers.NewAuditHandler(publisher)
-	tenantHandler := handlers.NewTenantHandler(tenantRepo)
+	tenantHandler := handlers.NewTenantHandler(tenantRepo, publisher)
 	staffHandler := handlers.NewStaffHandler(staffRepo)
 	settingsHandler := handlers.NewSettingsHandler(tenantRepo)
 	reportHandler := handlers.NewReportHandler(reportRepo)
@@ -47,6 +47,7 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher) *gin.Engine {
 		v1.GET("/tenants/:id", tenantHandler.Get)
 		v1.PUT("/tenants/:id", tenantHandler.Update)
 		v1.PATCH("/tenants/:id/deactivate", tenantHandler.Deactivate)
+		v1.POST("/tenants/:id/sync", tenantHandler.Sync)
 
 		// Configurações do tenant
 		v1.GET("/tenants/:id/settings", settingsHandler.Get)

@@ -83,6 +83,7 @@ func main() {
 	// Repositórios (Mapeiam o DB para o Domínio)
 	tenantRepo := repositories.NewTenantRepository(db)
 	reportRepo := repositories.NewReportRepository(db)
+	collabRepo := repositories.NewCollaboratorRepository(db)
 
 	// Serviços Externos (Client HTTP da API Secullum).
 	// Credenciais GLOBAIS (mesma para todos os tenants), vindas de env. O client cuida
@@ -103,6 +104,11 @@ func main() {
 	// Motor de Regras (O Cérebro)
 	auditorCore := usecase.NewAuditorService()
 
+	// Sincronizador de colaboradores: busca o espelho de funcionários/jornadas na
+	// Secullum e o persiste localmente, alimentando o worker de auditoria com dados
+	// reais (em vez do colaborador mockado usado nas fases iniciais do projeto).
+	syncService := usecase.NewSynchronizerService(tenantRepo, collabRepo, secullumSvc)
+
 	// Pool de canais para publicação HTTP (canais AMQP não são seguros para uso
 	// concorrente; cada requisição empresta um canal exclusivo do pool).
 	publisherPool, err := messaging.NewChannelPool(rabbitConn, 5)
@@ -112,9 +118,9 @@ func main() {
 	defer publisherPool.Close()
 
 	// =====================================================================
-	// 4. INICIALIZAÇÃO DO WORKER (CONSUMER DO RABBITMQ)
+	// 4. INICIALIZAÇÃO DOS WORKERS (CONSUMERS DO RABBITMQ)
 	// =====================================================================
-	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, secullumSvc, reportRepo, auditorCore)
+	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, collabRepo, secullumSvc, reportRepo, auditorCore)
 
 	// A palavra reservada 'go' faz esta função rodar em background.
 	// Assim, ela fica a escutar a fila infinitamente sem parar o servidor web.
@@ -122,6 +128,22 @@ func main() {
 		log.Println("Iniciando Worker de Auditoria em background...")
 		if err := auditConsumer.Start(context.Background()); err != nil {
 			log.Fatalf("Falha crítica no Worker de Auditoria: %v", err)
+		}
+	}()
+
+	// Canal dedicado para o worker de provisionamento (canais AMQP não são seguros
+	// para uso concorrente entre goroutines; cada worker tem o seu próprio).
+	provisioningCh, err := rabbitConn.Channel()
+	if err != nil {
+		log.Fatalf("Falha ao abrir canal de provisionamento no RabbitMQ: %v", err)
+	}
+	defer provisioningCh.Close()
+
+	provisioningConsumer := messaging.NewProvisioningConsumer(provisioningCh, syncService)
+	go func() {
+		log.Println("Iniciando Worker de Provisionamento em background...")
+		if err := provisioningConsumer.Start(context.Background()); err != nil {
+			log.Fatalf("Falha crítica no Worker de Provisionamento: %v", err)
 		}
 	}()
 

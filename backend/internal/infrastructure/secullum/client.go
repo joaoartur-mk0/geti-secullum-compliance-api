@@ -42,14 +42,31 @@ type secullumPunchResponse struct {
 	Saida2        *string `json:"Saida2"`
 }
 
-// secullumFuncionarioResponse mapeia identidade + descrição da jornada do colaborador.
+// secullumFuncionarioResponse mapeia identidade + o número do horário do colaborador.
+// O número identifica a jornada contratual, buscada à parte via GetHorario (o endpoint
+// de funcionários não traz os horários por dia — só a descrição/número do horário).
 type secullumFuncionarioResponse struct {
 	Id      int    `json:"Id"`
+	Nome    string `json:"Nome"`
 	Cpf     string `json:"Cpf"`
 	Celular string `json:"Celular"`
 	Horario struct {
-		Descricao string `json:"Descricao"`
+		Numero int `json:"Numero"`
 	} `json:"Horario"`
+}
+
+// secullumHorarioResponse mapeia a jornada contratual (por dia da semana) de um
+// horário da Secullum. A resposta do endpoint é um array (normalmente com 1 item).
+type secullumHorarioResponse struct {
+	Id   int `json:"Id"`
+	Dias []struct {
+		DiaSemana int     `json:"DiaSemana"`
+		Entrada1  *string `json:"Entrada1"`
+		Saida1    *string `json:"Saida1"`
+		Entrada2  *string `json:"Entrada2"`
+		Saida2    *string `json:"Saida2"`
+		Carga     int     `json:"Carga"` // carga diária contratual, em minutos
+	} `json:"Dias"`
 }
 
 type secullumClient struct {
@@ -78,13 +95,35 @@ func NewSecullumClient(cfg Config) domain.SecullumService {
 
 // do respeita o rate limit, garante um token válido e executa a requisição já com os
 // cabeçalhos de autenticação e de banco selecionado.
+//
+// A Secullum pode invalidar um token ANTES do nosso TTL local de 55min (ex.: um novo
+// login na mesma conta derruba o token anterior). Por isso, ao receber 401 no modo
+// login, descartamos o token em cache, autenticamos de novo e repetimos a requisição
+// UMA única vez. Se o 401 persistir (credenciais realmente inválidas), ele é devolvido
+// ao chamador. Com token estático não há o que renovar — o 401 é devolvido direto.
 func (c *secullumClient) do(ctx context.Context, method, endpoint string, tenant *domain.Tenant) (*http.Response, error) {
-	// 1. Rate limit (100 req/min): aguarda um token do bucket.
+	// Rate limit (100 req/min): aguarda um token do bucket.
 	if err := c.limiter.wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limit: %w", err)
 	}
 
-	// 2. Token global válido (renova automaticamente se expirado).
+	resp, err := c.doOnce(ctx, method, endpoint, tenant)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized && c.tokens.canRefresh() {
+		resp.Body.Close()
+		log.Printf("[Secullum] 401 recebido (token invalidado no servidor?) — renovando token e repetindo a requisição uma vez...")
+		c.tokens.invalidate()
+		return c.doOnce(ctx, method, endpoint, tenant)
+	}
+
+	return resp, nil
+}
+
+// doOnce executa uma única tentativa da requisição, obtendo um token válido do manager.
+func (c *secullumClient) doOnce(ctx context.Context, method, endpoint string, tenant *domain.Tenant) (*http.Response, error) {
 	token, err := c.tokens.get(ctx)
 	if err != nil {
 		return nil, err
@@ -192,8 +231,9 @@ func (c *secullumClient) GetDailyPunches(tenant *domain.Tenant, date time.Time) 
 	return domainPunches, nil
 }
 
-// GetCollaborators busca os funcionários do tenant, mapeia identidade e parseia a
-// jornada contratual (matriz de turnos) a partir da descrição textual do horário.
+// GetCollaborators busca os funcionários do tenant e mapeia a identidade. A jornada
+// contratual (matriz de turnos) NÃO vem aqui — o endpoint de funcionários só traz o
+// número do horário; use GetHorario para buscar os dias/horários de cada um.
 func (c *secullumClient) GetCollaborators(tenant *domain.Tenant) ([]domain.Collaborator, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
@@ -217,23 +257,67 @@ func (c *secullumClient) GetCollaborators(tenant *domain.Tenant) ([]domain.Colla
 
 	collaborators := make([]domain.Collaborator, 0, len(rawResponses))
 	for _, raw := range rawResponses {
-		collab := domain.Collaborator{
-			TenantID:   tenant.ID,
-			SecullumID: raw.Id,
-			Cpf:        raw.Cpf,
-			Celular:    raw.Celular,
-		}
-
-		// Jornada contratual: parseia a descrição textual, se interpretável.
-		if sch, ok := parseHorario(raw.Horario.Descricao); ok {
-			collab.Schedules = []domain.CollaboratorSchedule{sch}
-		} else if raw.Horario.Descricao != "" {
-			log.Printf("[Aviso Secullum] Jornada não interpretável do funcionário %d: %q",
-				raw.Id, raw.Horario.Descricao)
-		}
-
-		collaborators = append(collaborators, collab)
+		collaborators = append(collaborators, domain.Collaborator{
+			TenantID:      tenant.ID,
+			SecullumID:    raw.Id,
+			Name:          raw.Nome,
+			Cpf:           raw.Cpf,
+			Celular:       raw.Celular,
+			HorarioNumero: raw.Horario.Numero,
+		})
 	}
 
 	return collaborators, nil
+}
+
+// GetHorario busca a jornada contratual (um registro por dia da semana) associada ao
+// número de horário informado. Poucos horários distintos existem por tenant — o
+// Synchronizer deve deduplicar e chamar este método uma vez por número, não por
+// colaborador, para não estourar o rate limit da Secullum.
+func (c *secullumClient) GetHorario(tenant *domain.Tenant, numero int) ([]domain.CollaboratorSchedule, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	endpoint := fmt.Sprintf("%s/IntegracaoExterna/Horarios?numero=%d", c.baseURL, numero)
+
+	resp, err := c.do(ctx, http.MethodGet, endpoint, tenant)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, statusError("horarios", resp)
+	}
+
+	var rawResponses []secullumHorarioResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rawResponses); err != nil {
+		return nil, err
+	}
+	if len(rawResponses) == 0 {
+		return nil, nil
+	}
+
+	schedules := make([]domain.CollaboratorSchedule, 0, len(rawResponses[0].Dias))
+	for _, dia := range rawResponses[0].Dias {
+		sch := domain.CollaboratorSchedule{
+			DiaSemana:    dia.DiaSemana,
+			CargaMinutos: dia.Carga,
+		}
+		if isClock(dia.Entrada1) {
+			sch.Entrada1 = *dia.Entrada1
+		}
+		if isClock(dia.Saida1) {
+			sch.Saida1 = *dia.Saida1
+		}
+		if isClock(dia.Entrada2) {
+			sch.Entrada2 = *dia.Entrada2
+		}
+		if isClock(dia.Saida2) {
+			sch.Saida2 = *dia.Saida2
+		}
+		schedules = append(schedules, sch)
+	}
+
+	return schedules, nil
 }

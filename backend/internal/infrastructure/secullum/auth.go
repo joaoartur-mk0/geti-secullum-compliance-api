@@ -71,6 +71,23 @@ func (tm *tokenManager) get(ctx context.Context) (string, error) {
 	return token, nil
 }
 
+// canRefresh indica se o manager consegue obter um token NOVO (modo login).
+// Com token estático não há renovação possível — um 401 é definitivo até o
+// operador trocar o token no ambiente.
+func (tm *tokenManager) canRefresh() bool {
+	return tm.staticToken == ""
+}
+
+// invalidate descarta o token em cache, forçando nova autenticação no próximo get.
+// Usado quando o servidor rejeita (401) um token que localmente ainda parecia válido —
+// a Secullum pode invalidar tokens antes do TTL (ex.: novo login na mesma conta).
+func (tm *tokenManager) invalidate() {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.token = ""
+	tm.expiresAt = time.Time{}
+}
+
 // authenticate faz a chamada de autenticação (OAuth2 password grant) e devolve o
 // access_token, conforme a documentação de Integração Ponto Web da Secullum:
 //

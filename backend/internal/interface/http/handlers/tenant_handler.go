@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -23,10 +27,31 @@ type UpdateTenantRequest struct {
 
 type TenantHandler struct {
 	tenantRepo domain.TenantRepository
+	publisher  EventPublisher
 }
 
-func NewTenantHandler(repo domain.TenantRepository) *TenantHandler {
-	return &TenantHandler{tenantRepo: repo}
+func NewTenantHandler(repo domain.TenantRepository, publisher EventPublisher) *TenantHandler {
+	return &TenantHandler{tenantRepo: repo, publisher: publisher}
+}
+
+// publishProvisioning enfileira o pedido de sincronização de colaboradores do tenant.
+// Usa um contexto próprio (não o da requisição HTTP) com um timeout curto, pois a
+// publicação deve seguir mesmo que a resposta HTTP já tenha sido enviada, e falha ao
+// publicar não desfaz o cadastro/gatilho já concluído: fica só registrada em log,
+// já que o usuário ainda pode sincronizar depois via POST /tenants/:id/sync.
+func (h *TenantHandler) publishProvisioning(tenantID int) {
+	payload, err := json.Marshal(map[string]int{"tenant_id": tenantID})
+	if err != nil {
+		log.Printf("[TenantHandler] Falha ao serializar evento de provisionamento do tenant %d: %v", tenantID, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := h.publisher.Publish(ctx, "tenant.provisioning", payload); err != nil {
+		log.Printf("[TenantHandler] Falha ao enfileirar provisionamento do tenant %d: %v", tenantID, err)
+	}
 }
 
 func toDomainTenant(req CreateTenantRequest) *domain.Tenant {
@@ -75,9 +100,35 @@ func (h *TenantHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// Dispara a sincronização de colaboradores (assíncrona, via fila
+	// tenant.provisioning) para que a auditoria já tenha dados reais para trabalhar.
+	h.publishProvisioning(tenant.ID)
+
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "tenant cadastrado com sucesso",
 		"tenant":  toTenantResponse(tenant),
+	})
+}
+
+// Sync — POST /api/v1/tenants/:id/sync
+// Reenfileira a sincronização de colaboradores sob demanda (ex.: após alterações no
+// cadastro de funcionários na Secullum, ou para popular colaboradores de um tenant
+// já existente que ainda não foi sincronizado).
+func (h *TenantHandler) Sync(c *gin.Context) {
+	const op = "TenantHandler.Sync"
+
+	id, err := idParam(c, op, "id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	h.publishProvisioning(id)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message":   "sincronização de colaboradores enfileirada com sucesso",
+		"tenant_id": id,
+		"status":    "processing",
 	})
 }
 

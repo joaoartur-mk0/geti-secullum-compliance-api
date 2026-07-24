@@ -155,6 +155,28 @@ paths:
         "400": { $ref: "#/components/responses/ValidationError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
 
+  /api/v1/tenants/{id}/sync:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    post:
+      tags: [Tenants]
+      summary: >
+        Enfileira a sincronização de colaboradores (funcionários e jornadas) a partir
+        da Secullum. Disparado automaticamente no cadastro do tenant; pode ser
+        reacionado aqui sob demanda (ex.: após mudanças no cadastro de funcionários).
+      responses:
+        "202":
+          description: Sincronização aceita para processamento assíncrono
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  tenant_id: { type: integer }
+                  status: { type: string, example: processing }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
   /api/v1/tenants/{id}/settings:
     parameters:
       - $ref: "#/components/parameters/TenantId"
