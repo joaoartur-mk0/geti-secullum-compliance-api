@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   Bell,
   Building2,
   LayoutDashboard,
@@ -36,6 +37,7 @@ export function useTenant(): TenantContextValue {
 
 const navItems = [
   { to: '/', label: 'Painel', icon: LayoutDashboard, end: true },
+  { to: '/indicadores', label: 'Indicadores', icon: BarChart3, end: false },
   { to: '/gestores', label: 'Gestores', icon: Users, end: false },
   { to: '/avisos', label: 'Avisos', icon: Bell, end: false },
   { to: '/whatsapp', label: 'WhatsApp', icon: MessageCircle, end: false },
