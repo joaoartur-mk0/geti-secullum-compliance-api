@@ -20,16 +20,20 @@ A aba **já funciona hoje** consumindo o endpoint que já existe:
 GET /api/v1/tenants/:id/reports
 ```
 
-Do relatório mais recente, o frontend **deriva** o que consegue apenas da lista de
-`inconsistencies`:
+Da lista de `inconsistencies` (de todos os relatórios), o frontend **deriva** —
+**sem depender de nada novo do backend**:
 
-- Total de inconsistências, split **crítico / alerta**.
-- **Distribuição por tipo** (gráfico de barras).
-- Nº de **colaboradores afetados** (IDs distintos nas inconsistências).
+- Total de inconsistências da última varredura, split **crítico / alerta**.
+- **Distribuição por tipo**, com barras empilhadas por severidade (crít/alerta).
+- **Evolução por varredura** (gráfico de tendência ao longo dos relatórios do período).
+- **Top colaboradores** com mais ocorrências (usa o `CollaboratorName` já preenchido).
+- Nº de **colaboradores afetados** (IDs distintos) e **nº de varreduras** no período.
 
-Enquanto o backend não mandar o objeto `metrics`, a aba mostra um aviso e deixa três
-cards em "—": **Índice de Conformidade**, **Horas Extras** e **Atrasos**. Esses três
-dependem de dados que só a varredura completa por colaborador produz.
+Quando o backend enviar o objeto `metrics`, a aba passa a **liderar** com os indicadores
+consolidados (**Índice de Conformidade**, **Horas Extras**, **Atrasos**, colaboradores
+auditados) — que dependem de dados que só a varredura completa por colaborador produz.
+Até lá, esses três não aparecem (a aba fica completa só com o que é derivado, sem
+placeholders).
 
 ---
 
