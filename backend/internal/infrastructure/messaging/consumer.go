@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"backend/internal/domain"
@@ -20,6 +21,7 @@ type AuditConsumer struct {
 	secullumSvc domain.SecullumService
 	reportRepo  domain.ReportRepository
 	auditorCore *usecase.AuditorService
+	publisher   *ChannelPool
 }
 
 func NewAuditConsumer(
@@ -29,6 +31,7 @@ func NewAuditConsumer(
 	ss domain.SecullumService,
 	rr domain.ReportRepository,
 	ac *usecase.AuditorService,
+	publisher *ChannelPool,
 ) *AuditConsumer {
 	return &AuditConsumer{
 		channel:     ch,
@@ -37,6 +40,7 @@ func NewAuditConsumer(
 		secullumSvc: ss,
 		reportRepo:  rr,
 		auditorCore: ac,
+		publisher:   publisher,
 	}
 }
 
@@ -221,12 +225,79 @@ func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
 	log.Printf("[OK] Auditoria concluída! %d colaborador(es) avaliado(s), %d infração(ões) encontrada(s).\n",
 		len(collaborators), len(inconsistencies))
 
-	// 7. Confirma (Ack) para o RabbitMQ apagar a mensagem da fila
+	// 7. Notifica os gestores (staffs) do tenant com o resumo do fechamento noturno,
+	// publicando na fila `notifications.whatsapp` (seção 5.4 da especificação). A
+	// entrega via Evolution API é responsabilidade do worker de notificações — este
+	// worker apenas enfileira, sem esperar a latência da API externa.
+	c.notifyStaffs(tenant, diaAlvo, inconsistencies)
+
+	// 8. Confirma (Ack) para o RabbitMQ apagar a mensagem da fila
 	if err := msg.Ack(false); err != nil {
 		// O relatório já foi salvo; o Ack falhou. A mensagem poderá ser reentregue e
 		// gerar um relatório duplicado — registrado aqui para rastreabilidade.
 		log.Printf("[Erro] Tenant %d: relatório salvo, mas falha ao confirmar (Ack) mensagem: %v\n", payload.TenantID, err)
 	}
+}
+
+// notifyStaffs publica, para cada gestor (staff) cadastrado do tenant, um resumo da
+// auditoria de fechamento na fila `notifications.whatsapp`. Sem staffs cadastrados,
+// apenas registra o aviso — não é um erro (o tenant pode ainda não ter configurado
+// um responsável), então a auditoria não é reprocessada por isso.
+func (c *AuditConsumer) notifyStaffs(tenant *domain.Tenant, dia time.Time, inconsistencies []domain.AuditInconsistency) {
+	if c.publisher == nil {
+		return
+	}
+	if len(tenant.Staffs) == 0 {
+		log.Printf("[Aviso Notificação] Tenant %d: nenhum staff cadastrado, alerta não enviado.\n", tenant.ID)
+		return
+	}
+
+	message := buildClosingSummaryMessage(tenant.Name, dia, inconsistencies)
+
+	for _, staff := range tenant.Staffs {
+		notification := domain.WhatsAppNotification{
+			TenantID: tenant.ID,
+			StaffID:  staff.ID,
+			Number:   staff.Celular,
+			Message:  message,
+		}
+		body, err := json.Marshal(notification)
+		if err != nil {
+			log.Printf("[Erro Notificação] Tenant %d, staff %d: falha ao serializar alerta: %v\n", tenant.ID, staff.ID, err)
+			continue
+		}
+		if err := c.publisher.Publish(context.Background(), "notifications.whatsapp", body); err != nil {
+			log.Printf("[Erro Notificação] Tenant %d, staff %d: falha ao publicar alerta: %v\n", tenant.ID, staff.ID, err)
+		}
+	}
+}
+
+// buildClosingSummaryMessage monta o texto do resumo consolidado noturno enviado
+// aos gestores, no mesmo tom do exemplo documentado na especificação (seção 5.4).
+func buildClosingSummaryMessage(tenantName string, dia time.Time, inconsistencies []domain.AuditInconsistency) string {
+	if len(inconsistencies) == 0 {
+		return fmt.Sprintf(
+			"✅ *Fechamento de Jornada*\n\n🏢 *Empresa:* %s\n📅 *Data:* %s\n\nNenhuma inconsistência encontrada.",
+			tenantName, dia.Format("02/01/2006"),
+		)
+	}
+
+	var criticas, alertas int
+	for _, inc := range inconsistencies {
+		if inc.Severity == domain.SeverityCritical {
+			criticas++
+		} else {
+			alertas++
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "⚠️ *Fechamento de Jornada*\n\n🏢 *Empresa:* %s\n📅 *Data:* %s\n", tenantName, dia.Format("02/01/2006"))
+	fmt.Fprintf(&b, "🔴 *Críticas:* %d | 🟡 *Alertas:* %d\n\n*Ocorrências:*\n", criticas, alertas)
+	for _, inc := range inconsistencies {
+		fmt.Fprintf(&b, "• %s (%s) — %s: %s\n", inc.CollaboratorName, inc.Severity, inc.Type, inc.Description)
+	}
+	return b.String()
 }
 
 // indexPunchesByCollaborator agrupa as batidas por id de colaborador (Secullum) para

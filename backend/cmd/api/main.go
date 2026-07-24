@@ -14,6 +14,7 @@ import (
 	// Ajuste "seu_projeto" para o nome real do seu módulo Go
 	"backend/internal/infrastructure/database/models"
 	"backend/internal/infrastructure/database/repositories"
+	"backend/internal/infrastructure/evolution"
 	"backend/internal/infrastructure/messaging"
 	"backend/internal/infrastructure/secullum"
 	appHttp "backend/internal/interface/http"
@@ -109,8 +110,18 @@ func main() {
 	// reais (em vez do colaborador mockado usado nas fases iniciais do projeto).
 	syncService := usecase.NewSynchronizerService(tenantRepo, collabRepo, secullumSvc)
 
+	// Client da Evolution API (credenciais GLOBAIS, iguais para todos os tenants).
+	// Usado pelo worker de notificações para entregar os alertas de compliance via
+	// WhatsApp (docs/00_Automation_Engineering_Documentation.md, seção 5.4).
+	notificationSvc := evolution.NewClient(evolution.Config{
+		BaseURL:  os.Getenv("EVOLUTION_API_URL"),
+		APIKey:   os.Getenv("EVOLUTION_API_KEY"),
+		Instance: os.Getenv("EVOLUTION_INSTANCE"),
+	})
+
 	// Pool de canais para publicação HTTP (canais AMQP não são seguros para uso
-	// concorrente; cada requisição empresta um canal exclusivo do pool).
+	// concorrente; cada requisição empresta um canal exclusivo do pool). Também é
+	// usado pelo worker de auditoria para publicar os alertas de fechamento.
 	publisherPool, err := messaging.NewChannelPool(rabbitConn, 5)
 	if err != nil {
 		log.Fatalf("Falha ao criar o pool de canais de publicação: %v", err)
@@ -120,7 +131,7 @@ func main() {
 	// =====================================================================
 	// 4. INICIALIZAÇÃO DOS WORKERS (CONSUMERS DO RABBITMQ)
 	// =====================================================================
-	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, collabRepo, secullumSvc, reportRepo, auditorCore)
+	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, collabRepo, secullumSvc, reportRepo, auditorCore, publisherPool)
 
 	// A palavra reservada 'go' faz esta função rodar em background.
 	// Assim, ela fica a escutar a fila infinitamente sem parar o servidor web.
@@ -144,6 +155,22 @@ func main() {
 		log.Println("Iniciando Worker de Provisionamento em background...")
 		if err := provisioningConsumer.Start(context.Background()); err != nil {
 			log.Fatalf("Falha crítica no Worker de Provisionamento: %v", err)
+		}
+	}()
+
+	// Canal dedicado para o worker de notificações (mesma razão: canais AMQP não são
+	// seguros para uso concorrente entre goroutines).
+	notificationCh, err := rabbitConn.Channel()
+	if err != nil {
+		log.Fatalf("Falha ao abrir canal de notificações no RabbitMQ: %v", err)
+	}
+	defer notificationCh.Close()
+
+	notificationConsumer := messaging.NewNotificationConsumer(notificationCh, notificationSvc)
+	go func() {
+		log.Println("Iniciando Worker de Notificações (WhatsApp) em background...")
+		if err := notificationConsumer.Start(context.Background()); err != nil {
+			log.Fatalf("Falha crítica no Worker de Notificações: %v", err)
 		}
 	}()
 
