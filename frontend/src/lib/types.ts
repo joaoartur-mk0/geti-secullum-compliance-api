@@ -74,6 +74,13 @@ export interface Report {
   metrics?: ReportMetrics | null // preenchido pelo backend quando a varredura completa entrar
 }
 
+// Colaborador sincronizado (espelho local do tenant, via GET /tenants/:id/collaborators).
+export interface Collaborator {
+  id: number
+  secullum_id: number
+  name: string
+}
+
 export interface HealthResponse {
   status: string
   database: string

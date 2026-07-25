@@ -81,9 +81,18 @@ function derive(report: Report): DerivedMetrics {
 export default function Indicadores() {
   const { tenant } = useTenant()
   const [reports, setReports] = useState<Loadable<Report[]>>({ phase: 'loading' })
+  // Total de colaboradores sincronizados (GET /collaborators). Secundário: uma falha aqui
+  // não derruba os indicadores — só oculta o painel de equipe. null = desconhecido/erro.
+  const [syncedTotal, setSyncedTotal] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     setReports({ phase: 'loading' })
+    setSyncedTotal(null)
+    // Colaboradores em paralelo, sem bloquear nem derrubar os relatórios.
+    api
+      .listCollaborators(tenant.id)
+      .then((r) => setSyncedTotal(r.total))
+      .catch(() => setSyncedTotal(null))
     try {
       setReports({ phase: 'ready', data: await api.listReports(tenant.id) })
     } catch (error) {
@@ -163,13 +172,21 @@ export default function Indicadores() {
       )}
 
       {reports.phase === 'ready' && latest && (
-        <Dashboard reports={reports.data} latest={latest} />
+        <Dashboard reports={reports.data} latest={latest} syncedTotal={syncedTotal} />
       )}
     </div>
   )
 }
 
-function Dashboard({ reports, latest }: { reports: Report[]; latest: Report }) {
+function Dashboard({
+  reports,
+  latest,
+  syncedTotal,
+}: {
+  reports: Report[]
+  latest: Report
+  syncedTotal: number | null
+}) {
   const d = useMemo(() => derive(latest), [latest])
   const m: ReportMetrics | null = latest.metrics ?? null
 
@@ -188,6 +205,7 @@ function Dashboard({ reports, latest }: { reports: Report[]; latest: Report }) {
 
   return (
     <div className="mt-8 flex flex-col gap-6">
+      <CollaboratorsSummary syncedTotal={syncedTotal} withAlerts={d.affectedCollaborators} />
       <KpiRow derived={d} metrics={m} reportCount={reports.length} />
       <DistributionChart byType={d.byType} total={d.total} />
       <TrendChart series={series} />
@@ -252,7 +270,7 @@ function KpiRow({
   }
 
   return (
-    <section aria-label="Indicadores da última varredura" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <section aria-label="Indicadores da última varredura" className="grid grid-cols-2 gap-3 lg:grid-cols-3">
       <Kpi
         icon={<TrendingUp size={17} aria-hidden />}
         label="Inconsistências"
@@ -272,19 +290,71 @@ function KpiRow({
         tone={derived.critical > 0 ? 'critico' : 'ok'}
       />
       <Kpi
-        icon={<Users size={17} aria-hidden />}
-        label="Colaboradores"
-        value={String(derived.affectedCollaborators)}
-        hint="com ocorrência na varredura"
-        tone="neutral"
-      />
-      <Kpi
         icon={<CalendarDays size={17} aria-hidden />}
         label="Varreduras"
         value={String(reportCount)}
         hint="no histórico do período"
         tone="neutral"
       />
+    </section>
+  )
+}
+
+// ---------- Resumo de colaboradores (sincronizados / corretos / com alertas) ----------
+
+function CollaboratorsSummary({
+  syncedTotal,
+  withAlerts,
+}: {
+  syncedTotal: number | null
+  withAlerts: number
+}) {
+  // "Corretos" = sincronizados sem ocorrência na última varredura. Clamp em 0 para o caso
+  // (raro) de o relatório citar um colaborador que já saiu do espelho sincronizado.
+  const correct = syncedTotal != null ? Math.max(0, syncedTotal - withAlerts) : null
+
+  return (
+    <section aria-label="Colaboradores sob auditoria">
+      <div className="mb-3 flex items-center gap-2">
+        <Users size={16} className="text-ink-faint" aria-hidden />
+        <h2 className="text-sm font-semibold text-ink">Colaboradores</h2>
+      </div>
+
+      {syncedTotal == null ? (
+        <div className="rounded-card border border-line bg-bg p-4 text-sm text-ink-soft shadow-card">
+          Não foi possível carregar os colaboradores sincronizados. Verifique a sincronização em
+          Empresa e tente novamente.
+        </div>
+      ) : syncedTotal === 0 ? (
+        <div className="rounded-card border border-line bg-bg p-4 text-sm text-ink-soft shadow-card">
+          Nenhum colaborador sincronizado ainda. A sincronização com a Secullum roda ao cadastrar a
+          empresa; dispare novamente em Empresa se necessário.
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+          <Kpi
+            icon={<Users size={17} aria-hidden />}
+            label="Sincronizados"
+            value={String(syncedTotal)}
+            hint="funcionários sob auditoria"
+            tone="neutral"
+          />
+          <Kpi
+            icon={<ShieldCheck size={17} aria-hidden />}
+            label="Corretos"
+            value={String(correct)}
+            hint="sem ocorrência na varredura"
+            tone={correct === syncedTotal ? 'ok' : 'neutral'}
+          />
+          <Kpi
+            icon={<OctagonAlert size={17} aria-hidden />}
+            label="Com alertas"
+            value={String(withAlerts)}
+            hint="com ao menos uma ocorrência"
+            tone={withAlerts > 0 ? 'alerta' : 'ok'}
+          />
+        </div>
+      )}
     </section>
   )
 }

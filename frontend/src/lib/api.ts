@@ -1,5 +1,6 @@
 import type {
   ApiErrorBody,
+  Collaborator,
   CreateTenantRequest,
   HealthResponse,
   Report,
@@ -120,4 +121,9 @@ export const api = {
     request<{ reports: Report[] | null }>(`/api/v1/tenants/${tenantId}/reports`).then(
       (r) => r.reports ?? [],
     ),
+
+  listCollaborators: (tenantId: number) =>
+    request<{ collaborators: Collaborator[] | null; total: number }>(
+      `/api/v1/tenants/${tenantId}/collaborators`,
+    ).then((r) => ({ collaborators: r.collaborators ?? [], total: r.total ?? 0 })),
 }
