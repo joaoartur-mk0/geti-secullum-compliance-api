@@ -1,6 +1,7 @@
 import {
   BarChart3,
   CalendarDays,
+  ChevronRight,
   Clock,
   OctagonAlert,
   RefreshCw,
@@ -535,9 +536,10 @@ function TrendChart({ series }: { series: { date: string; total: number; critica
 
 function TopCollaborators({ inconsistencies }: { inconsistencies: AuditInconsistency[] }) {
   const ranked = useMemo(() => {
-    const byCollab = new Map<number, { name: string; count: number; critical: number }>()
+    const byCollab = new Map<number, { id: number; name: string; count: number; critical: number }>()
     for (const item of inconsistencies) {
       const entry = byCollab.get(item.CollaboratorID) ?? {
+        id: item.CollaboratorID,
         name: item.CollaboratorName || `Colaborador ${item.CollaboratorID}`,
         count: 0,
         critical: 0,
@@ -566,14 +568,20 @@ function TopCollaborators({ inconsistencies }: { inconsistencies: AuditInconsist
           Nenhum colaborador com ocorrência nesta varredura.
         </p>
       ) : (
-        <ul className="divide-y divide-line">
+        <ul className="-my-1 flex flex-col">
           {ranked.map((c) => (
-            <li key={c.name} className="flex items-center justify-between gap-3 py-2.5">
-              <span className="min-w-0 flex-1 truncate font-medium text-ink">{c.name}</span>
-              <span className="shrink-0 text-sm tabular-nums text-ink-soft">
-                {c.count} ocorrência{c.count === 1 ? '' : 's'}
-              </span>
-              <SeverityBadge severity={c.critical > 0 ? 'CRITICO' : 'ALERTA'} />
+            <li key={c.id}>
+              <Link
+                to={`/colaboradores/${c.id}`}
+                className="-mx-2 flex items-center gap-3 rounded-field px-2 py-2.5 transition-colors duration-150 hover:bg-panel"
+              >
+                <span className="min-w-0 flex-1 truncate font-medium text-ink">{c.name}</span>
+                <span className="shrink-0 text-sm tabular-nums text-ink-soft">
+                  {c.count} ocorrência{c.count === 1 ? '' : 's'}
+                </span>
+                <SeverityBadge severity={c.critical > 0 ? 'CRITICO' : 'ALERTA'} />
+                <ChevronRight size={16} aria-hidden className="shrink-0 text-ink-faint" />
+              </Link>
             </li>
           ))}
         </ul>

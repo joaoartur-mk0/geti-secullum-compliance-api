@@ -2,6 +2,8 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { ToastProvider } from './components/ui'
 import AppShell from './layouts/AppShell'
 import Avisos from './pages/Avisos'
+import ColaboradorHistorico from './pages/ColaboradorHistorico'
+import Colaboradores from './pages/Colaboradores'
 import Empresa from './pages/Empresa'
 import Gestores from './pages/Gestores'
 import Indicadores from './pages/Indicadores'
@@ -18,6 +20,8 @@ export default function App() {
           <Route element={<AppShell />}>
             <Route index element={<Painel />} />
             <Route path="indicadores" element={<Indicadores />} />
+            <Route path="colaboradores" element={<Colaboradores />} />
+            <Route path="colaboradores/:secullumId" element={<ColaboradorHistorico />} />
             <Route path="gestores" element={<Gestores />} />
             <Route path="avisos" element={<Avisos />} />
             <Route path="whatsapp" element={<WhatsApp />} />
