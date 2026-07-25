@@ -122,19 +122,29 @@ Testado em `auth_test.go`, `ratelimit_test.go`, `schedule_test.go`.
 ## 7. Mensageria e ciclo de vida da auditoria (`infrastructure/messaging`)
 
 - **`channel_pool.go`** — pool de canais AMQP. Canais do RabbitMQ **não são seguros para
-  uso concorrente**; cada publicação HTTP empresta um canal exclusivo do pool.
+  uso concorrente**; cada publicação HTTP empresta um canal exclusivo do pool. Também é
+  usado pelo worker de auditoria para publicar os alertas de notificação.
 - **`consumer.go`** — worker que escuta a fila `audit.trigger`, busca as batidas, roda o
-  motor de regras, salva o relatório e confirma (Ack) a mensagem. Erros transitórios
-  (rede/DB) voltam para a fila (requeue); permanentes (payload inválido) são descartados.
+  motor de regras, salva o relatório, publica o resumo em `notifications.whatsapp` para
+  cada staff do tenant e confirma (Ack) a mensagem. Erros transitórios (rede/DB) voltam
+  para a fila (requeue); permanentes (payload inválido) são descartados.
+- **`notification_consumer.go`** — worker que escuta a fila `notifications.whatsapp` e
+  entrega cada mensagem via **Evolution API** (`infrastructure/evolution`). Erros
+  transitórios (rede, instância desconectada) voltam para a fila; payload inválido é
+  descartado. Roda totalmente desacoplado do motor de auditoria — só se conectam pela fila.
 
 ### Fluxo de uma auditoria
 ```
 POST /api/v1/audit/trigger
   → publica {tenant_id} na fila audit.trigger  (retorna 202 na hora)
-      → worker consome
+      → worker de auditoria consome
           → busca tenant + batidas (Secullum)
               → ProcessRules (motor)
                   → salva Report no Postgres
+                      → publica 1 mensagem por staff em notifications.whatsapp
+                          → worker de notificações consome
+                              → Evolution API (POST /message/sendText/{instance})
+                                  → WhatsApp do gestor
 ```
 
 ---
@@ -181,6 +191,9 @@ A spec (`internal/interface/http/swagger/openapi.yaml`) é embutida no binário 
 | `SECULLUM_AUTH_URL` | Endpoint de autenticação | — |
 | `SECULLUM_USERNAME` / `SECULLUM_PASSWORD` | Credenciais globais | — |
 | `SECULLUM_API_TOKEN` | Token estático (opcional, testes) | — |
+| `EVOLUTION_API_URL` | Base da Evolution API | — |
+| `EVOLUTION_API_KEY` | Chave de API (header `apikey`) | — |
+| `EVOLUTION_INSTANCE` | Nome da instância conectada ao WhatsApp | — |
 
 ---
 
@@ -210,9 +223,10 @@ cd backend && go test ./...
 
 ## 11. O que ainda falta (roadmap)
 
-- **Sincronização de colaboradores** (fila `tenant.provisioning` + job diário): hoje o
-  worker usa um colaborador mockado; falta persistir os funcionários reais.
-- **Agendador (cron)** para as varreduras intra-dia e o fechamento noturno.
-- **Notificações WhatsApp** (fila `notifications.whatsapp` → Evolution API).
+- **Agendador (cron)** para as varreduras intra-dia e o fechamento noturno (hoje a
+  auditoria só é disparada manualmente via `POST /api/v1/audit/trigger`).
+- **Alertas preventivos intra-dia**: a fila `notifications.whatsapp` e o worker que a
+  consome já existem e são usados no fechamento noturno; falta o gatilho intra-dia
+  (seção 5.3) que dispara uma auditoria parcial sem gravar `Report`.
 - **Autenticação/middleware (JWT)** para proteger os endpoints administrativos.
 - **Criptografia** de credenciais sensíveis em repouso.

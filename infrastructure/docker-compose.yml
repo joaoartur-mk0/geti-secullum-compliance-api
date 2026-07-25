@@ -20,6 +20,10 @@ services:
       - SECULLUM_USERNAME=${SECULLUM_USERNAME:-}
       - SECULLUM_PASSWORD=${SECULLUM_PASSWORD:-}
       - SECULLUM_API_TOKEN=${SECULLUM_API_TOKEN:-}
+      # Credenciais GLOBAIS da Evolution API (envio de alertas via WhatsApp). Vêm do .env.
+      - EVOLUTION_API_URL=${EVOLUTION_API_URL:-}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-}
+      - EVOLUTION_INSTANCE=${EVOLUTION_INSTANCE:-}
     depends_on:
       db:
         condition: service_healthy
