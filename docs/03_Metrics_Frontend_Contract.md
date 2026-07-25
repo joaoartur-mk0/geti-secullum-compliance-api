@@ -12,6 +12,28 @@ do Compliance — sem importar PDF.
 
 ---
 
+## 0. Endpoint de colaboradores (JÁ IMPLEMENTADO)
+
+A aba mostra um painel **Colaboradores** (Sincronizados / Corretos / Com alertas). Para isso
+foi adicionado um endpoint simples que expõe o espelho local de colaboradores (que o worker
+`tenant.provisioning` já persiste, mas que nenhuma rota expunha):
+
+```
+GET /api/v1/tenants/:id/collaborators
+→ { "collaborators": [{ "id", "secullum_id", "name" }], "total": N }
+```
+
+Implementado em `internal/interface/http/handlers/collaborator_handler.go` + rota no `router.go`,
+reusando `CollaboratorRepository.GetByTenantID`. Não toca na lógica de auditoria/sync. O frontend
+usa `total` como "Sincronizados"; "Com alertas" = colaboradores distintos com inconsistência na
+última varredura; "Corretos" = total − com alertas. Quando o campo `metrics` (seção 2) existir com
+`collaborators_audited`/`clean_count`, esse painel pode migrar para números baseados na auditoria.
+
+> Nota: **não foi compilado localmente** (sem toolchain Go na máquina do Sergio; build é via
+> Docker). Rodar `docker compose ... up --build` para validar.
+
+---
+
 ## 1. Situação atual (o frontend já está no ar sem depender do back)
 
 A aba **já funciona hoje** consumindo o endpoint que já existe:

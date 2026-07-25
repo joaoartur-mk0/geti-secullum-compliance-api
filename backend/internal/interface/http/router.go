@@ -24,6 +24,7 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher) *gin.Engine {
 	tenantRepo := repositories.NewTenantRepository(db)
 	staffRepo := repositories.NewStaffRepository(db)
 	reportRepo := repositories.NewReportRepository(db)
+	collaboratorRepo := repositories.NewCollaboratorRepository(db)
 
 	// Documentação (Swagger UI em /swagger, spec em /openapi.yaml)
 	swagger.Register(router)
@@ -34,6 +35,7 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher) *gin.Engine {
 	staffHandler := handlers.NewStaffHandler(staffRepo)
 	settingsHandler := handlers.NewSettingsHandler(tenantRepo)
 	reportHandler := handlers.NewReportHandler(reportRepo)
+	collaboratorHandler := handlers.NewCollaboratorHandler(collaboratorRepo)
 
 	// Agrupamento de Rotas V1
 	v1 := router.Group("/api/v1")
@@ -61,6 +63,9 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher) *gin.Engine {
 
 		// Relatórios de auditoria (painel de consulta)
 		v1.GET("/tenants/:id/reports", reportHandler.List)
+
+		// Colaboradores sincronizados (espelho local do tenant)
+		v1.GET("/tenants/:id/collaborators", collaboratorHandler.List)
 	}
 
 	return router
