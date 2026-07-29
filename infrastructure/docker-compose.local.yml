@@ -53,6 +53,9 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      args:
+          # URL pública da API, embutida no bundle. Deriva do APP_DOMAIN do .env.
+          VITE_API_URL: http://localhost:8080
     container_name: secullum-compliance-frontend-local
     restart: unless-stopped
     ports:
