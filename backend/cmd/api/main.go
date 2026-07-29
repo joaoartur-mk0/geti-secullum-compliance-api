@@ -111,12 +111,16 @@ func main() {
 	syncService := usecase.NewSynchronizerService(tenantRepo, collabRepo, secullumSvc)
 
 	// Client da Evolution API (credenciais GLOBAIS, iguais para todos os tenants).
-	// Usado pelo worker de notificações para entregar os alertas de compliance via
-	// WhatsApp (docs/00_Automation_Engineering_Documentation.md, seção 5.4).
-	notificationSvc := evolution.NewClient(evolution.Config{
-		BaseURL:  os.Getenv("EVOLUTION_API_URL"),
-		APIKey:   os.Getenv("EVOLUTION_API_KEY"),
-		Instance: os.Getenv("EVOLUTION_INSTANCE"),
+	// Implementa o envio de alertas (worker de notificações) E a gerência da instância
+	// de WhatsApp por tenant (endpoints /whatsapp). A instância em si é derivada do
+	// prefixo abaixo + o id do tenant (ex.: "tenant-3").
+	evolutionPrefix := os.Getenv("EVOLUTION_INSTANCE_PREFIX")
+	if evolutionPrefix == "" {
+		evolutionPrefix = "tenant"
+	}
+	evolutionClient := evolution.NewClient(evolution.Config{
+		BaseURL: os.Getenv("EVOLUTION_API_URL"),
+		APIKey:  os.Getenv("EVOLUTION_API_KEY"),
 	})
 
 	// Pool de canais para publicação HTTP (canais AMQP não são seguros para uso
@@ -131,7 +135,7 @@ func main() {
 	// =====================================================================
 	// 4. INICIALIZAÇÃO DOS WORKERS (CONSUMERS DO RABBITMQ)
 	// =====================================================================
-	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, collabRepo, secullumSvc, reportRepo, auditorCore, publisherPool)
+	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, collabRepo, secullumSvc, reportRepo, auditorCore, publisherPool, evolutionPrefix)
 
 	// A palavra reservada 'go' faz esta função rodar em background.
 	// Assim, ela fica a escutar a fila infinitamente sem parar o servidor web.
@@ -166,7 +170,7 @@ func main() {
 	}
 	defer notificationCh.Close()
 
-	notificationConsumer := messaging.NewNotificationConsumer(notificationCh, notificationSvc)
+	notificationConsumer := messaging.NewNotificationConsumer(notificationCh, evolutionClient)
 	go func() {
 		log.Println("Iniciando Worker de Notificações (WhatsApp) em background...")
 		if err := notificationConsumer.Start(context.Background()); err != nil {
@@ -181,7 +185,7 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	router := appHttp.SetupRouter(db, publisherPool)
+	router := appHttp.SetupRouter(db, publisherPool, evolutionClient, evolutionPrefix)
 
 	// Endpoint de verificação de integridade da infraestrutura (Conexão DB e Broker).
 	// Registrado aqui porque depende da conexão do banco e do broker.

@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"backend/internal/domain"
 	"backend/internal/infrastructure/database/repositories"
 	"backend/internal/interface/http/handlers"
 	"backend/internal/interface/http/middleware"
@@ -12,9 +13,10 @@ import (
 
 // SetupRouter configura os middlewares e inicializa todas as rotas da API.
 // Recebe um EventPublisher (implementado pelo ChannelPool) para enfileirar eventos
-// de forma segura sob concorrência. O endpoint /health é registrado no main.go,
-// pois depende da conexão do banco e do broker para reportar o estado real da infra.
-func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher) *gin.Engine {
+// de forma segura sob concorrência, o WhatsAppManager (client da Evolution) e o prefixo
+// de instância por-tenant. O endpoint /health é registrado no main.go, pois depende da
+// conexão do banco e do broker para reportar o estado real da infra.
+func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr domain.WhatsAppManager, whatsappPrefix string) *gin.Engine {
 	router := gin.Default()
 
 	// CORS de desenvolvimento (permite o painel de testes em outra porta).
@@ -36,6 +38,7 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher) *gin.Engine {
 	settingsHandler := handlers.NewSettingsHandler(tenantRepo)
 	reportHandler := handlers.NewReportHandler(reportRepo)
 	collaboratorHandler := handlers.NewCollaboratorHandler(collaboratorRepo)
+	whatsappHandler := handlers.NewWhatsAppHandler(whatsappMgr, whatsappPrefix)
 
 	// Agrupamento de Rotas V1
 	v1 := router.Group("/api/v1")
@@ -66,6 +69,11 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher) *gin.Engine {
 
 		// Colaboradores sincronizados (espelho local do tenant)
 		v1.GET("/tenants/:id/collaborators", collaboratorHandler.List)
+
+		// WhatsApp (instância da Evolution API por tenant)
+		v1.GET("/tenants/:id/whatsapp/status", whatsappHandler.Status)
+		v1.POST("/tenants/:id/whatsapp/instance", whatsappHandler.Connect)
+		v1.DELETE("/tenants/:id/whatsapp/instance", whatsappHandler.Disconnect)
 	}
 
 	return router

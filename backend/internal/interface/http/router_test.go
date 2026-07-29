@@ -13,7 +13,7 @@ import (
 func TestSetupRouter_RegistraRotasSemConflito(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := SetupRouter(nil, nil)
+	router := SetupRouter(nil, nil, nil, "tenant")
 
 	got := make(map[string]bool)
 	for _, ri := range router.Routes() {
@@ -35,6 +35,10 @@ func TestSetupRouter_RegistraRotasSemConflito(t *testing.T) {
 		"PUT /api/v1/staffs/:staffId",
 		"DELETE /api/v1/staffs/:staffId",
 		"GET /api/v1/tenants/:id/reports",
+		"GET /api/v1/tenants/:id/collaborators",
+		"GET /api/v1/tenants/:id/whatsapp/status",
+		"POST /api/v1/tenants/:id/whatsapp/instance",
+		"DELETE /api/v1/tenants/:id/whatsapp/instance",
 	}
 	for _, w := range want {
 		if !got[w] {

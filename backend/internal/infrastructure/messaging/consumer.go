@@ -15,13 +15,14 @@ import (
 )
 
 type AuditConsumer struct {
-	channel     *amqp.Channel
-	tenantRepo  domain.TenantRepository
-	collabRepo  domain.CollaboratorRepository
-	secullumSvc domain.SecullumService
-	reportRepo  domain.ReportRepository
-	auditorCore *usecase.AuditorService
-	publisher   *ChannelPool
+	channel        *amqp.Channel
+	tenantRepo     domain.TenantRepository
+	collabRepo     domain.CollaboratorRepository
+	secullumSvc    domain.SecullumService
+	reportRepo     domain.ReportRepository
+	auditorCore    *usecase.AuditorService
+	publisher      *ChannelPool
+	instancePrefix string // prefixo p/ derivar a instância de WhatsApp do tenant
 }
 
 func NewAuditConsumer(
@@ -32,15 +33,17 @@ func NewAuditConsumer(
 	rr domain.ReportRepository,
 	ac *usecase.AuditorService,
 	publisher *ChannelPool,
+	instancePrefix string,
 ) *AuditConsumer {
 	return &AuditConsumer{
-		channel:     ch,
-		tenantRepo:  tr,
-		collabRepo:  cr,
-		secullumSvc: ss,
-		reportRepo:  rr,
-		auditorCore: ac,
-		publisher:   publisher,
+		channel:        ch,
+		tenantRepo:     tr,
+		collabRepo:     cr,
+		secullumSvc:    ss,
+		reportRepo:     rr,
+		auditorCore:    ac,
+		publisher:      publisher,
+		instancePrefix: instancePrefix,
 	}
 }
 
@@ -253,11 +256,13 @@ func (c *AuditConsumer) notifyStaffs(tenant *domain.Tenant, dia time.Time, incon
 	}
 
 	message := buildClosingSummaryMessage(tenant.Name, dia, inconsistencies)
+	instance := domain.WhatsAppInstanceName(c.instancePrefix, tenant.ID)
 
 	for _, staff := range tenant.Staffs {
 		notification := domain.WhatsAppNotification{
 			TenantID: tenant.ID,
 			StaffID:  staff.ID,
+			Instance: instance,
 			Number:   staff.Celular,
 			Message:  message,
 		}

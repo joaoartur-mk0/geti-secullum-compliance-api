@@ -73,12 +73,12 @@ func (c *NotificationConsumer) processMessage(msg amqp.Delivery) {
 		return
 	}
 
-	if payload.Number == "" || payload.Message == "" {
-		c.reject(msg, false, payload.TenantID, "número ou mensagem vazios")
+	if payload.Instance == "" || payload.Number == "" || payload.Message == "" {
+		c.reject(msg, false, payload.TenantID, "instância, número ou mensagem vazios")
 		return
 	}
 
-	if err := c.notifierSvc.SendText(payload.Number, payload.Message); err != nil {
+	if err := c.notifierSvc.SendText(payload.Instance, payload.Number, payload.Message); err != nil {
 		// Falha na API externa (rede/instância desconectada/rate-limit) é transitória:
 		// devolve à fila para retry.
 		c.reject(msg, true, payload.TenantID, fmt.Sprintf("falha ao enviar via Evolution API: %v", err))
