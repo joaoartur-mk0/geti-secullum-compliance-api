@@ -10,18 +10,10 @@ import type {
   Tenant,
 } from './types'
 
-const API_URL_KEY = 'scw.apiUrl'
-const DEFAULT_API_URL = 'http://localhost:8080'
-
-export function getApiUrl(): string {
-  return localStorage.getItem(API_URL_KEY)?.replace(/\/+$/, '') || DEFAULT_API_URL
-}
-
-export function setApiUrl(url: string) {
-  const clean = url.trim().replace(/\/+$/, '')
-  if (clean && clean !== DEFAULT_API_URL) localStorage.setItem(API_URL_KEY, clean)
-  else localStorage.removeItem(API_URL_KEY)
-}
+// Endereço da API: vem da variável de ambiente de build do Vite (VITE_API_URL).
+// É resolvida em BUILD TIME — em produção, defina VITE_API_URL ao buildar o frontend
+// (ver frontend/.env.example). No desenvolvimento local, cai no padrão localhost.
+const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8080').replace(/\/+$/, '')
 
 export class ApiError extends Error {
   code: string
@@ -37,7 +29,7 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${getApiUrl()}${path}`, {
+    res = await fetch(`${API_URL}${path}`, {
       ...init,
       headers: { 'Content-Type': 'application/json', ...init?.headers },
     })

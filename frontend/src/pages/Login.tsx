@@ -2,14 +2,12 @@ import { ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { Button, Field, Input } from '../components/ui'
-import { getApiUrl, setApiUrl } from '../lib/api'
 import { getSession, startSession } from '../lib/session'
 
 export default function Login() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [apiUrl, setApiUrlInput] = useState(getApiUrl())
   const [error, setError] = useState<string | null>(null)
 
   if (getSession()) return <Navigate to="/" replace />
@@ -20,7 +18,6 @@ export default function Login() {
       setError('Preencha e-mail e senha para entrar.')
       return
     }
-    setApiUrl(apiUrl)
     startSession(email.trim())
     navigate('/', { replace: true })
   }
@@ -87,17 +84,6 @@ export default function Login() {
           {error && <p className="text-sm font-medium text-critico">{error}</p>}
 
           <Button type="submit">Entrar</Button>
-
-          <details className="mt-2 text-sm">
-            <summary className="cursor-pointer text-ink-soft transition-colors hover:text-ink">
-              Configuração avançada
-            </summary>
-            <div className="mt-3">
-              <Field label="Endereço da API" hint="Padrão: http://localhost:8080">
-                <Input value={apiUrl} onChange={(e) => setApiUrlInput(e.target.value)} spellCheck={false} />
-              </Field>
-            </div>
-          </details>
         </form>
       </div>
     </div>
