@@ -81,6 +81,19 @@ export interface Collaborator {
   name: string
 }
 
+// Estado da instância de WhatsApp do tenant na Evolution API.
+export interface WhatsAppStatus {
+  connected: boolean
+  state: string
+}
+
+// Resposta de conexão: qrcode (data URI base64) presente quando há QR a escanear.
+export interface WhatsAppConnectResponse {
+  qrcode?: string
+  connected: boolean
+  state: string
+}
+
 export interface HealthResponse {
   status: string
   database: string

@@ -1,40 +1,90 @@
-import { Info, MessageCircle, Smartphone, Unplug } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { Button, Field, Input, useToast } from '../components/ui'
-import { formatPhone, isValidPhone, normalizePhone } from '../lib/format'
+import { MessageCircle, RefreshCw, Unplug } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Button, ErrorNote, Skeleton, useToast } from '../components/ui'
+import { useTenant } from '../layouts/AppShell'
+import { api, ApiError } from '../lib/api'
 
-// Fluxo demonstrativo: o backend ainda não expõe os endpoints da Evolution API.
-// O estado vive só no navegador para a prévia; quando a integração chegar,
-// estas etapas passam a refletir o status real da instância.
-
-const EVOLUTION_KEY = 'scw.evolution'
-
-interface EvolutionState {
-  instance: string
-  number: string
-  connectedAt: string
-}
-
-function loadState(): EvolutionState | null {
-  try {
-    const raw = localStorage.getItem(EVOLUTION_KEY)
-    return raw ? (JSON.parse(raw) as EvolutionState) : null
-  } catch {
-    return null
-  }
-}
+// Fluxo real da Evolution API: o backend gerencia a instância de WhatsApp do tenant
+// (criar/QR/status/desconectar). A instância é derivada no backend (prefixo + tenant),
+// e o número conectado é o do celular que escanear o QR.
 
 type Phase =
+  | { step: 'loading' }
+  | { step: 'error'; message: string }
   | { step: 'disconnected' }
-  | { step: 'qr'; instance: string; number: string; expiresIn: number }
-  | { step: 'connected'; state: EvolutionState }
+  | { step: 'qr'; qrcode: string }
+  | { step: 'connected' }
 
 export default function WhatsApp() {
+  const { tenant } = useTenant()
   const toast = useToast()
-  const [phase, setPhase] = useState<Phase>(() => {
-    const state = loadState()
-    return state ? { step: 'connected', state } : { step: 'disconnected' }
-  })
+  const [phase, setPhase] = useState<Phase>({ step: 'loading' })
+  const [busy, setBusy] = useState(false)
+
+  const loadStatus = useCallback(async () => {
+    setPhase({ step: 'loading' })
+    try {
+      const status = await api.getWhatsappStatus(tenant.id)
+      setPhase(status.connected ? { step: 'connected' } : { step: 'disconnected' })
+    } catch (error) {
+      setPhase({
+        step: 'error',
+        message: error instanceof ApiError ? error.message : 'Erro ao consultar o WhatsApp.',
+      })
+    }
+  }, [tenant.id])
+
+  useEffect(() => {
+    void loadStatus()
+  }, [loadStatus])
+
+  // Enquanto o QR está na tela, verifica o status a cada 3s para detectar o pareamento.
+  useEffect(() => {
+    if (phase.step !== 'qr') return
+    const timer = setInterval(async () => {
+      try {
+        const status = await api.getWhatsappStatus(tenant.id)
+        if (status.connected) {
+          setPhase({ step: 'connected' })
+          toast('success', 'WhatsApp conectado. Os alertas sairão deste número.')
+        }
+      } catch {
+        // Erros transitórios no polling são ignorados; a próxima varredura tenta de novo.
+      }
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [phase.step, tenant.id, toast])
+
+  async function connect() {
+    setBusy(true)
+    try {
+      const res = await api.connectWhatsapp(tenant.id)
+      if (res.connected) {
+        setPhase({ step: 'connected' })
+      } else if (res.qrcode) {
+        setPhase({ step: 'qr', qrcode: res.qrcode })
+      } else {
+        toast('error', 'A instância não devolveu um QR Code. Tente novamente em instantes.')
+      }
+    } catch (error) {
+      toast('error', error instanceof ApiError ? error.message : 'Falha ao conectar o WhatsApp.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function disconnect() {
+    setBusy(true)
+    try {
+      await api.disconnectWhatsapp(tenant.id)
+      toast('success', 'Instância desconectada.')
+      setPhase({ step: 'disconnected' })
+    } catch (error) {
+      toast('error', error instanceof ApiError ? error.message : 'Falha ao desconectar.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div className="animate-rise">
@@ -46,71 +96,31 @@ export default function WhatsApp() {
         </p>
       </header>
 
-      <div className="mt-4 flex max-w-prose items-start gap-2.5 rounded-card bg-brand-soft px-4 py-3 text-sm leading-relaxed text-brand-strong">
-        <Info size={16} className="mt-0.5 shrink-0" aria-hidden />
-        <p>
-          Prévia demonstrativa: a conexão real com a Evolution API será ativada junto com o
-          backend. O fluxo abaixo mostra como funcionará.
-        </p>
-      </div>
-
       <div className="mt-8 max-w-lg">
-        {phase.step === 'disconnected' && (
-          <DisconnectedCard
-            onGenerate={(instance, number) => setPhase({ step: 'qr', instance, number, expiresIn: 45 })}
-          />
-        )}
+        {phase.step === 'loading' && <Skeleton className="h-40 w-full" />}
+
+        {phase.step === 'error' && <ErrorNote message={phase.message} onRetry={loadStatus} />}
+
+        {phase.step === 'disconnected' && <DisconnectedCard onConnect={connect} busy={busy} />}
+
         {phase.step === 'qr' && (
           <QrCard
-            instance={phase.instance}
-            onExpire={() => {
-              toast('error', 'O QR Code expirou. Gere um novo para conectar.')
-              setPhase({ step: 'disconnected' })
-            }}
+            qrcode={phase.qrcode}
             onCancel={() => setPhase({ step: 'disconnected' })}
-            onScanned={() => {
-              const state: EvolutionState = {
-                instance: phase.instance,
-                number: phase.number,
-                connectedAt: new Date().toISOString(),
-              }
-              localStorage.setItem(EVOLUTION_KEY, JSON.stringify(state))
-              toast('success', 'WhatsApp conectado. Os alertas sairão deste número.')
-              setPhase({ step: 'connected', state })
-            }}
+            onRegenerate={connect}
+            busy={busy}
           />
         )}
-        {phase.step === 'connected' && (
-          <ConnectedCard
-            state={phase.state}
-            onDisconnect={() => {
-              localStorage.removeItem(EVOLUTION_KEY)
-              toast('success', 'Instância desconectada.')
-              setPhase({ step: 'disconnected' })
-            }}
-          />
-        )}
+
+        {phase.step === 'connected' && <ConnectedCard onDisconnect={disconnect} busy={busy} />}
       </div>
     </div>
   )
 }
 
-function DisconnectedCard({ onGenerate }: { onGenerate: (instance: string, number: string) => void }) {
-  const [instance, setInstance] = useState('geti-alertas')
-  const [number, setNumber] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  function submit(event: React.FormEvent) {
-    event.preventDefault()
-    if (!isValidPhone(number)) {
-      setError('Informe o número com DDD que ficará responsável pelos disparos.')
-      return
-    }
-    onGenerate(instance.trim() || 'geti-alertas', normalizePhone(number))
-  }
-
+function DisconnectedCard({ onConnect, busy }: { onConnect: () => void; busy: boolean }) {
   return (
-    <form onSubmit={submit} className="rounded-card border border-line bg-bg p-5 shadow-card">
+    <div className="rounded-card border border-line bg-bg p-5 shadow-card">
       <div className="flex items-center gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-full bg-panel text-ink-faint">
           <Unplug size={20} aria-hidden />
@@ -120,74 +130,54 @@ function DisconnectedCard({ onGenerate }: { onGenerate: (instance: string, numbe
           <p className="text-sm text-ink-soft">Os alertas ficam represados até a conexão.</p>
         </div>
       </div>
-
-      <div className="mt-5 flex flex-col gap-4">
-        <Field label="Nome da instância" hint="Identifica esta conexão na Evolution API.">
-          <Input value={instance} onChange={(e) => setInstance(e.target.value)} spellCheck={false} />
-        </Field>
-        <Field label="Número do WhatsApp">
-          <Input
-            required
-            inputMode="tel"
-            value={number}
-            onChange={(e) => setNumber(e.target.value)}
-            placeholder="(31) 99999-9999"
-          />
-        </Field>
-        {error && <p className="text-sm font-medium text-critico">{error}</p>}
-        <Button type="submit" className="self-start">
-          <MessageCircle size={17} aria-hidden />
-          Gerar QR Code
-        </Button>
-      </div>
-    </form>
+      <p className="mt-4 max-w-prose text-sm leading-relaxed text-ink-soft">
+        Gere o QR Code e escaneie com o WhatsApp do número que fará os disparos. A conexão é
+        detectada automaticamente assim que o pareamento é concluído.
+      </p>
+      <Button onClick={onConnect} busy={busy} className="mt-5 self-start">
+        <MessageCircle size={17} aria-hidden />
+        Gerar QR Code
+      </Button>
+    </div>
   )
 }
 
 function QrCard({
-  instance,
-  onScanned,
+  qrcode,
   onCancel,
-  onExpire,
+  onRegenerate,
+  busy,
 }: {
-  instance: string
-  onScanned: () => void
+  qrcode: string
   onCancel: () => void
-  onExpire: () => void
+  onRegenerate: () => void
+  busy: boolean
 }) {
-  const [remaining, setRemaining] = useState(45)
-
-  useEffect(() => {
-    const timer = setInterval(() => setRemaining((s) => s - 1), 1000)
-    return () => clearInterval(timer)
-  }, [])
-
-  useEffect(() => {
-    if (remaining <= 0) onExpire()
-  }, [remaining, onExpire])
-
   return (
     <div className="rounded-card border border-line bg-bg p-5 shadow-card">
-      <p className="font-semibold">
-        Escaneie com o WhatsApp <span className="font-normal text-ink-soft">· instância {instance}</span>
-      </p>
+      <p className="font-semibold">Escaneie com o WhatsApp</p>
       <ol className="mt-2 list-inside list-decimal text-sm leading-relaxed text-ink-soft">
-        <li>Abra o WhatsApp no celular do número informado</li>
+        <li>Abra o WhatsApp no celular do número que fará os disparos</li>
         <li>Toque em Configurações → Dispositivos conectados</li>
         <li>Aponte a câmera para o código abaixo</li>
       </ol>
 
       <div className="mt-5 flex flex-col items-center gap-3">
-        <FakeQr seed={instance} />
-        <p className="text-sm tabular-nums text-ink-soft" role="timer">
-          Expira em {remaining}s
+        <img
+          src={qrcode}
+          alt="QR Code para conectar o WhatsApp"
+          className="h-56 w-56 rounded-lg border border-line bg-white p-2"
+        />
+        <p className="flex items-center gap-2 text-sm text-ink-soft" role="status">
+          <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-brand" aria-hidden />
+          Aguardando leitura…
         </p>
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button onClick={onScanned}>
-          <Smartphone size={17} aria-hidden />
-          Simular leitura (demo)
+        <Button variant="secondary" onClick={onRegenerate} busy={busy}>
+          <RefreshCw size={16} aria-hidden />
+          Gerar novo QR
         </Button>
         <Button variant="ghost" onClick={onCancel}>
           Cancelar
@@ -197,52 +187,7 @@ function QrCard({
   )
 }
 
-/** QR ilustrativo (não escaneável) gerado deterministicamente a partir da instância. */
-function FakeQr({ seed }: { seed: string }) {
-  const cells = useMemo(() => {
-    let hash = 2166136261
-    for (const char of seed) {
-      hash = Math.imul(hash ^ char.charCodeAt(0), 16777619)
-    }
-    const size = 25
-    const grid: boolean[] = []
-    for (let i = 0; i < size * size; i++) {
-      hash = Math.imul(hash ^ (hash >>> 15), 2246822519)
-      grid.push(((hash >>> 13) & 1) === 1)
-    }
-    return grid
-  }, [seed])
-
-  const size = 25
-  const finder = (x: number, y: number) => (
-    <g key={`${x}-${y}`}>
-      <rect x={x} y={y} width={7} height={7} fill="none" stroke="currentColor" strokeWidth={1} />
-      <rect x={x + 2} y={y + 2} width={3} height={3} fill="currentColor" />
-    </g>
-  )
-
-  return (
-    <svg
-      viewBox={`-1 -1 ${size + 2} ${size + 2}`}
-      className="h-48 w-48 rounded-lg border border-line bg-white p-2 text-ink"
-      role="img"
-      aria-label="QR Code ilustrativo para conexão do WhatsApp"
-    >
-      {cells.map((on, index) => {
-        const x = index % size
-        const y = Math.floor(index / size)
-        const inFinder = (x < 8 && y < 8) || (x > size - 9 && y < 8) || (x < 8 && y > size - 9)
-        if (!on || inFinder) return null
-        return <rect key={index} x={x} y={y} width={1} height={1} fill="currentColor" />
-      })}
-      {finder(0, 0)}
-      {finder(size - 7, 0)}
-      {finder(0, size - 7)}
-    </svg>
-  )
-}
-
-function ConnectedCard({ state, onDisconnect }: { state: EvolutionState; onDisconnect: () => void }) {
+function ConnectedCard({ onDisconnect, busy }: { onDisconnect: () => void; busy: boolean }) {
   return (
     <div className="rounded-card border border-line bg-bg p-5 shadow-card">
       <div className="flex flex-wrap items-center gap-3">
@@ -251,18 +196,15 @@ function ConnectedCard({ state, onDisconnect }: { state: EvolutionState; onDisco
         </span>
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-2 font-semibold">
-            {formatPhone(state.number)}
+            WhatsApp conectado
             <span className="inline-flex items-center gap-1.5 rounded-full bg-ok-bg px-2 py-0.5 text-xs font-semibold text-ok">
               <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-ok" aria-hidden />
-              Conectado
+              Ativo
             </span>
           </p>
-          <p className="text-sm text-ink-soft">
-            instância {state.instance} · desde{' '}
-            {new Date(state.connectedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
-          </p>
+          <p className="text-sm text-ink-soft">A instância está pareada e pronta para os disparos.</p>
         </div>
-        <Button variant="danger" onClick={onDisconnect}>
+        <Button variant="danger" onClick={onDisconnect} busy={busy}>
           <Unplug size={16} aria-hidden />
           Desconectar
         </Button>

@@ -8,6 +8,8 @@ import type {
   Staff,
   StaffRequest,
   Tenant,
+  WhatsAppConnectResponse,
+  WhatsAppStatus,
 } from './types'
 
 // Endereço da API: vem da variável de ambiente de build do Vite (VITE_API_URL).
@@ -118,4 +120,17 @@ export const api = {
     request<{ collaborators: Collaborator[] | null; total: number }>(
       `/api/v1/tenants/${tenantId}/collaborators`,
     ).then((r) => ({ collaborators: r.collaborators ?? [], total: r.total ?? 0 })),
+
+  getWhatsappStatus: (tenantId: number) =>
+    request<WhatsAppStatus>(`/api/v1/tenants/${tenantId}/whatsapp/status`),
+
+  connectWhatsapp: (tenantId: number) =>
+    request<WhatsAppConnectResponse>(`/api/v1/tenants/${tenantId}/whatsapp/instance`, {
+      method: 'POST',
+    }),
+
+  disconnectWhatsapp: (tenantId: number) =>
+    request<{ success: boolean }>(`/api/v1/tenants/${tenantId}/whatsapp/instance`, {
+      method: 'DELETE',
+    }),
 }
