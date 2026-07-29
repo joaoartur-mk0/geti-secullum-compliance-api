@@ -5,6 +5,8 @@
 #     (docker network create public), pois é ela quem expõe o tráfego HTTP(S).
 #   - Variável APP_DOMAIN definida no .env com o domínio público da API
 #     (ex.: APP_DOMAIN=api.seudominio.com.br).
+#   - Variável WEB_DOMAIN definida no .env com o domínio público do painel
+#     administrativo (ex.: WEB_DOMAIN=app.seudominio.com.br).
 #
 # Uso:
 #   cd infrastructure
@@ -60,6 +62,31 @@ services:
       - traefik.http.routers.secullum-compliance-app.tls=true
       - traefik.http.routers.secullum-compliance-app.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
       - traefik.http.services.secullum-compliance-app.loadbalancer.server.port=8080
+
+  # Painel administrativo (build multi-stage Node -> nginx). Serve só estático; a
+  # base URL da API é configurada na própria tela de login do painel (ex.: aponte
+  # para https://${APP_DOMAIN}). Por isso não precisa da rede interna, só da "public"
+  # para o Traefik.
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: secullum-compliance-frontend-prod
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - app
+    networks:
+      - public
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=public
+      # Domínio vindo de variável de ambiente (.env): WEB_DOMAIN=app.seudominio.com.br
+      - traefik.http.routers.secullum-compliance-frontend.rule=Host(`${WEB_DOMAIN}`)
+      - traefik.http.routers.secullum-compliance-frontend.entrypoints=websecure
+      - traefik.http.routers.secullum-compliance-frontend.tls=true
+      - traefik.http.routers.secullum-compliance-frontend.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+      - traefik.http.services.secullum-compliance-frontend.loadbalancer.server.port=80
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
