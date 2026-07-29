@@ -37,7 +37,7 @@ services:
       # Credenciais GLOBAIS da Evolution API (envio de alertas via WhatsApp). Vêm do .env.
       - EVOLUTION_API_URL=${EVOLUTION_API_URL:-}
       - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-}
-      - EVOLUTION_INSTANCE=${EVOLUTION_INSTANCE:-}
+      - EVOLUTION_INSTANCE_PREFIX=${EVOLUTION_INSTANCE_PREFIX:-tenant}
     depends_on:
       db:
         condition: service_healthy
