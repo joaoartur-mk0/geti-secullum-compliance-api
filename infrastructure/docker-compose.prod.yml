@@ -64,13 +64,16 @@ services:
       - traefik.http.services.secullum-compliance-app.loadbalancer.server.port=8080
 
   # Painel administrativo (build multi-stage Node -> nginx). Serve só estático; a
-  # base URL da API é configurada na própria tela de login do painel (ex.: aponte
-  # para https://${APP_DOMAIN}). Por isso não precisa da rede interna, só da "public"
-  # para o Traefik.
+  # base URL da API é assada no bundle em BUILD TIME via VITE_API_URL (variável do
+  # Vite), apontando para o domínio público da API (https://${APP_DOMAIN}). Por isso
+  # não precisa da rede interna, só da "public" para o Traefik.
   frontend:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      args:
+        # URL pública da API, embutida no bundle. Deriva do APP_DOMAIN do .env.
+        VITE_API_URL: https://${APP_DOMAIN}
     container_name: secullum-compliance-frontend-prod
     restart: unless-stopped
     logging: *default-logging
