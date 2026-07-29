@@ -106,6 +106,26 @@ func TestDurationBetween_CruzaMeiaNoite(t *testing.T) {
 	}
 }
 
+func TestFormatHoursMinutes(t *testing.T) {
+	cases := []struct {
+		hours float64
+		want  string
+	}{
+		{19.97, "19h58min"}, // caso real que motivou a mudança (era "19.97 horas")
+		{1.70, "1h42min"},   // caso real (era "1.70 horas")
+		{9.0, "9h"},         // hora cheia não mostra "00min"
+		{2.5, "2h30min"},
+		{0.5, "0h30min"},
+		{1.999, "2h"}, // arredondamento não gera "1h60min"
+		{11.0, "11h"},
+	}
+	for _, c := range cases {
+		if got := formatHoursMinutes(c.hours); got != c.want {
+			t.Errorf("formatHoursMinutes(%.3f) = %q, quer %q", c.hours, got, c.want)
+		}
+	}
+}
+
 func TestProcessRules_SettingsNil(t *testing.T) {
 	s := NewAuditorService()
 	inc, err := s.ProcessRules(nil, &domain.Collaborator{ID: 1}, &domain.DailyPunch{}, nil, time.Now(), true)

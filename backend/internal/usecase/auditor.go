@@ -3,6 +3,7 @@ package usecase
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"backend/internal/domain"
@@ -108,6 +109,22 @@ func durationBetween(start, end time.Time) time.Duration {
 		d += 24 * time.Hour
 	}
 	return d
+}
+
+// formatHoursMinutes converte uma quantidade de horas (float, usada nos cálculos)
+// numa representação legível ao usuário final "XhYYmin" (ex.: 19.97 -> "19h58min",
+// 1.70 -> "1h42min", 9.0 -> "9h"). Arredonda para o minuto mais próximo somando tudo
+// em minutos primeiro, o que também evita o caso de borda "60min" (ex.: 1.999h vira
+// "2h", não "1h60min"). Espera valores não-negativos (as regras só formatam durações
+// positivas).
+func formatHoursMinutes(hours float64) string {
+	totalMinutes := int(math.Round(hours * 60))
+	h := totalMinutes / 60
+	m := totalMinutes % 60
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh%02dmin", h, m)
 }
 
 // scheduledTimeOn projeta um horário contratual "HH:MM" na data de `day`,
@@ -278,7 +295,7 @@ func (s *AuditorService) checkInterjornada(yesterday *domain.DailyPunch, today *
 			CollaboratorID: today.CollaboratorID,
 			Type:           "Interjornada Curta",
 			Severity:       severity,
-			Description:    fmt.Sprintf("O descanso entre jornadas foi de apenas %.2f horas. O mínimo exigido são 11 horas.", deltaHoras),
+			Description:    fmt.Sprintf("O descanso entre jornadas foi de apenas %s. O mínimo exigido são 11 horas.", formatHoursMinutes(deltaHoras)),
 		}, nil
 	}
 	return nil, nil
@@ -327,7 +344,7 @@ func (s *AuditorService) checkOvertime(collab *domain.Collaborator, punch *domai
 			CollaboratorID: collab.ID,
 			Type:           "Hora Extra Excedente",
 			Severity:       domain.SeverityCritical,
-			Description:    fmt.Sprintf("Limite legal estourado. O colaborador realizou %.2f horas extras.", overtime),
+			Description:    fmt.Sprintf("Limite legal estourado. O colaborador realizou %s de horas extras.", formatHoursMinutes(overtime)),
 		}, nil
 	}
 	if overtime > 1.0 {
@@ -335,7 +352,7 @@ func (s *AuditorService) checkOvertime(collab *domain.Collaborator, punch *domai
 			CollaboratorID: collab.ID,
 			Type:           "Alerta de Hora Extra",
 			Severity:       domain.SeverityAlert,
-			Description:    fmt.Sprintf("Atenção preventiva. O colaborador já realizou %.2f horas extras.", overtime),
+			Description:    fmt.Sprintf("Atenção preventiva. O colaborador já realizou %s de horas extras.", formatHoursMinutes(overtime)),
 		}, nil
 	}
 	return nil, nil
