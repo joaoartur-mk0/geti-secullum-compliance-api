@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"backend/internal/domain"
 )
@@ -171,5 +172,60 @@ func TestGetHorario_RespostaVazia(t *testing.T) {
 	}
 	if schedules != nil {
 		t.Errorf("esperava nil para número de horário inexistente, veio %+v", schedules)
+	}
+}
+
+// TestGetDailyPunches_ParseiaMemoriaEFolga usa registros reais de um domingo
+// (docs/payload_domingo_example.json): a jornada do dia vem nos campos Memoria* e é a
+// fonte da carga esperada; marcadores de abono (FERIAS) não são batidas.
+func TestGetDailyPunches_ParseiaMemoriaEFolga(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"FuncionarioId": 36, "Data": "2026-08-02T00:00:00",
+			 "Entrada1": "06:56", "Saida1": "09:05", "Entrada2": "09:20", "Saida2": "13:38",
+			 "Entrada3": null, "Saida3": null, "Entrada4": null, "Saida4": null,
+			 "MemoriaEntrada1": "08:00", "MemoriaSaida1": "09:00",
+			 "MemoriaEntrada2": "09:15", "MemoriaSaida2": "14:15",
+			 "Folga": false, "Neutro": false},
+			{"FuncionarioId": 78, "Data": "2026-08-02T00:00:00",
+			 "Entrada1": "FERIAS", "Saida1": "FERIAS", "Entrada2": "FERIAS", "Saida2": "FERIAS",
+			 "MemoriaEntrada1": "", "MemoriaSaida1": "",
+			 "Folga": true, "Neutro": false}
+		]`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(srv.URL)
+	punches, err := client.GetDailyPunches(&domain.Tenant{}, time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if len(punches) != 2 {
+		t.Fatalf("esperava 2 registros, veio %d", len(punches))
+	}
+
+	trabalhou := punches[0]
+	worked, ok, err := trabalhou.WorkedMinutes()
+	if err != nil || !ok || worked != 387 { // 2h09 + 4h18
+		t.Errorf("trabalhado = %d ok=%v err=%v, quer 387", worked, ok, err)
+	}
+	expected, ok, err := trabalhou.ExpectedMinutes()
+	if err != nil || !ok || expected != 360 { // 1h + 5h = 6h previstas
+		t.Errorf("previsto = %d ok=%v err=%v, quer 360", expected, ok, err)
+	}
+	if intervalo, ok, _ := trabalhou.FirstBreak(); !ok || intervalo != 15 {
+		t.Errorf("intervalo = %d ok=%v, quer 15", intervalo, ok)
+	}
+
+	abono := punches[1]
+	if !abono.Folga {
+		t.Errorf("registro de férias deveria vir com Folga=true")
+	}
+	if abono.PunchCount() != 0 {
+		t.Errorf("marcador de abono não é batida: PunchCount = %d, quer 0", abono.PunchCount())
+	}
+	if _, ok, _ := abono.ExpectedMinutes(); ok {
+		t.Errorf("Memoria vazia não deveria produzir carga prevista")
 	}
 }

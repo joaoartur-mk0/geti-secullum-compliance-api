@@ -9,6 +9,25 @@ import (
 
 func strPtr(s string) *string { return &s }
 
+// pairs monta pares "HH:MM"/"HH:MM"; string vazia representa marcação ausente.
+func pairs(vals ...string) []domain.PunchPair {
+	if len(vals)%2 != 0 {
+		vals = append(vals, "")
+	}
+	out := make([]domain.PunchPair, 0, len(vals)/2)
+	for i := 0; i < len(vals); i += 2 {
+		p := domain.PunchPair{}
+		if vals[i] != "" {
+			p.Entrada = strPtr(vals[i])
+		}
+		if vals[i+1] != "" {
+			p.Saida = strPtr(vals[i+1])
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // allEnabled devolve settings com todas as regras ligadas e severidades no default.
 func allEnabled() *domain.TenantSettings {
 	return &domain.TenantSettings{
@@ -29,99 +48,61 @@ func findByType(list []domain.AuditInconsistency, t string) (domain.AuditInconsi
 	return domain.AuditInconsistency{}, false
 }
 
-func TestExpectedDailyHours(t *testing.T) {
-	date := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC) // dia da semana fixo para o teste
-	weekday := int(date.Weekday())
-
-	t.Run("sem jornada sincronizada para o dia", func(t *testing.T) {
-		collab := &domain.Collaborator{}
-		if _, ok := expectedDailyHours(collab, date); ok {
-			t.Errorf("esperava ok=false sem Schedules")
-		}
-	})
-
-	t.Run("usa CargaMinutos quando presente", func(t *testing.T) {
-		collab := &domain.Collaborator{Schedules: []domain.CollaboratorSchedule{
-			{DiaSemana: weekday, CargaMinutos: 440}, // 7h20 — vem calculado pela Secullum
-		}}
-		h, ok := expectedDailyHours(collab, date)
-		if !ok || h != 440.0/60.0 {
-			t.Errorf("h=%.4f ok=%v, quer %.4f/true", h, ok, 440.0/60.0)
-		}
-	})
-
-	t.Run("calcula dos horários quando não há CargaMinutos", func(t *testing.T) {
-		collab := &domain.Collaborator{Schedules: []domain.CollaboratorSchedule{
-			{DiaSemana: weekday, Entrada1: "08:00", Saida1: "12:00", Entrada2: "13:00", Saida2: "17:00"},
-		}}
-		h, ok := expectedDailyHours(collab, date)
-		if !ok || h != 8.0 {
-			t.Errorf("h=%.2f ok=%v, quer 8.00/true", h, ok)
-		}
-	})
-
-	t.Run("folga contratual (Carga=0, sem horários) => 0h esperadas", func(t *testing.T) {
-		collab := &domain.Collaborator{Schedules: []domain.CollaboratorSchedule{
-			{DiaSemana: weekday}, // dia sincronizado, mas sem carga nem horários = folga
-		}}
-		h, ok := expectedDailyHours(collab, date)
-		if !ok || h != 0 {
-			t.Errorf("h=%.2f ok=%v, quer 0.00/true (folga => qualquer trabalho vira extra)", h, ok)
-		}
-	})
-
-	t.Run("dia da semana errado não casa", func(t *testing.T) {
-		collab := &domain.Collaborator{Schedules: []domain.CollaboratorSchedule{
-			{DiaSemana: (weekday + 1) % 7, CargaMinutos: 440},
-		}}
-		if _, ok := expectedDailyHours(collab, date); ok {
-			t.Errorf("esperava ok=false: jornada é de outro dia da semana")
-		}
-	})
-}
-
-func TestDurationBetween_CruzaMeiaNoite(t *testing.T) {
-	parse := func(s string) time.Time {
-		tm, err := parseClock(s)
-		if err != nil {
-			t.Fatalf("parseClock(%q): %v", s, err)
-		}
-		return tm
-	}
-
+func TestMinutesBetween_CruzaMeiaNoite(t *testing.T) {
 	cases := []struct {
 		start, end string
-		wantHours  float64
+		want       int
 	}{
-		{"08:00", "12:00", 4},  // mesmo dia
-		{"22:00", "02:00", 4},  // vira a meia-noite
-		{"18:00", "08:00", 14}, // interjornada típica
-		{"23:30", "00:30", 1},  // vira a meia-noite (curto)
+		{"08:00", "12:00", 240}, // mesmo dia
+		{"22:00", "02:00", 240}, // vira a meia-noite
+		{"18:00", "08:00", 840}, // interjornada típica (14h)
+		{"23:30", "00:30", 60},  // vira a meia-noite (curto)
 	}
 	for _, c := range cases {
-		got := durationBetween(parse(c.start), parse(c.end)).Hours()
-		if got != c.wantHours {
-			t.Errorf("durationBetween(%s,%s) = %.2fh, quer %.2fh", c.start, c.end, got, c.wantHours)
+		got, err := domain.MinutesBetween(c.start, c.end)
+		if err != nil {
+			t.Fatalf("MinutesBetween(%s,%s): %v", c.start, c.end, err)
+		}
+		if got != c.want {
+			t.Errorf("MinutesBetween(%s,%s) = %d, quer %d", c.start, c.end, got, c.want)
 		}
 	}
 }
 
-func TestFormatHoursMinutes(t *testing.T) {
+func TestFormatMinutes(t *testing.T) {
 	cases := []struct {
-		hours float64
-		want  string
+		minutes int
+		want    string
 	}{
-		{19.97, "19h58min"}, // caso real que motivou a mudança (era "19.97 horas")
-		{1.70, "1h42min"},   // caso real (era "1.70 horas")
-		{9.0, "9h"},         // hora cheia não mostra "00min"
-		{2.5, "2h30min"},
-		{0.5, "0h30min"},
-		{1.999, "2h"}, // arredondamento não gera "1h60min"
-		{11.0, "11h"},
+		{1198, "19h58min"},
+		{102, "1h42min"},
+		{540, "9h"}, // hora cheia não mostra "00min"
+		{150, "2h30min"},
+		{30, "0h30min"},
+		{660, "11h"},
 	}
 	for _, c := range cases {
-		if got := formatHoursMinutes(c.hours); got != c.want {
-			t.Errorf("formatHoursMinutes(%.3f) = %q, quer %q", c.hours, got, c.want)
+		if got := formatMinutes(c.minutes); got != c.want {
+			t.Errorf("formatMinutes(%d) = %q, quer %q", c.minutes, got, c.want)
+		}
+	}
+}
+
+func TestRequiredBreakMinutes(t *testing.T) {
+	cases := []struct {
+		carga int
+		want  int
+	}{
+		{440, 60}, // 7h20 (jornada de sábado) > 6h => 60min
+		{480, 60}, // 8h
+		{360, 15}, // 6h (jornada de domingo) => 15min
+		{300, 15}, // 5h
+		{240, 0},  // 4h => sem intervalo obrigatório
+		{0, 0},
+	}
+	for _, c := range cases {
+		if got := requiredBreakMinutes(c.carga); got != c.want {
+			t.Errorf("requiredBreakMinutes(%d) = %d, quer %d", c.carga, got, c.want)
 		}
 	}
 }
@@ -137,162 +118,283 @@ func TestProcessRules_SettingsNil(t *testing.T) {
 	}
 }
 
-func TestProcessRules_AlmocoReduzido(t *testing.T) {
+func TestProcessRules_IntervaloReduzidoJornadaLonga(t *testing.T) {
 	s := NewAuditorService()
-	collab := &domain.Collaborator{ID: 1}
 	punch := &domain.DailyPunch{
 		CollaboratorID: 1,
-		Entrada1:       strPtr("08:00"),
-		Saida1:         strPtr("12:00"),
-		Entrada2:       strPtr("12:30"), // só 30min de almoço
-		Saida2:         strPtr("18:00"),
+		Previstas:      pairs("08:00", "12:00", "13:00", "17:00"), // 8h previstas
+		Marcacoes:      pairs("08:00", "12:00", "12:30", "18:00"), // só 30min de intervalo
 	}
 
-	inc, err := s.ProcessRules(allEnabled(), collab, punch, nil, time.Now(), true)
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
 	if err != nil {
 		t.Fatalf("erro inesperado: %v", err)
 	}
-	got, ok := findByType(inc, "Almoço Reduzido")
+	got, ok := findByType(inc, TipoAlmocoReduzido)
 	if !ok {
-		t.Fatalf("esperava 'Almoço Reduzido', veio %+v", inc)
+		t.Fatalf("esperava %q, veio %+v", TipoAlmocoReduzido, inc)
 	}
 	if got.Severity != domain.SeverityCritical {
 		t.Errorf("severidade default deveria ser CRITICO, veio %q", got.Severity)
 	}
 }
 
-func TestProcessRules_AlmocoSeveridadeConfiguravel(t *testing.T) {
+// Caso real do payload de domingo: jornada prevista de 6h com intervalo previsto de
+// 15min. O intervalo de 15min registrado é legal (Art. 71 §1º) e não pode ser apontado.
+func TestProcessRules_IntervaloDe15MinutosEmJornadaDe6h(t *testing.T) {
+	s := NewAuditorService()
+	punch := &domain.DailyPunch{
+		CollaboratorID: 36,
+		Previstas:      pairs("08:00", "09:00", "09:15", "14:15"), // 6h
+		Marcacoes:      pairs("06:56", "09:05", "09:20", "13:38"), // intervalo real de 15min
+	}
+
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 36}, punch, nil, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if got, ok := findByType(inc, TipoAlmocoReduzido); ok {
+		t.Errorf("15min é o mínimo legal para jornada de 6h; não deveria infringir: %q", got.Description)
+	}
+}
+
+func TestProcessRules_IntervaloDe15MinutosEmJornadaLongaInfringe(t *testing.T) {
+	s := NewAuditorService()
+	punch := &domain.DailyPunch{
+		Previstas: pairs("07:00", "14:20"),                   // 7h20 (sábado, turno corrido)
+		Marcacoes: pairs("07:00", "12:00", "12:15", "14:35"), // intervalo de 15min
+	}
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if _, ok := findByType(inc, TipoAlmocoReduzido); !ok {
+		t.Fatalf("jornada de 7h20 exige 60min de intervalo, veio %+v", inc)
+	}
+}
+
+func TestProcessRules_SeveridadeAlmocoConfiguravel(t *testing.T) {
 	s := NewAuditorService()
 	settings := allEnabled()
 	settings.AlmocoSeverity = domain.SeverityAlert // tenant configurou ALERTA
 
 	punch := &domain.DailyPunch{
-		CollaboratorID: 1,
-		Saida1:         strPtr("12:00"),
-		Entrada2:       strPtr("12:30"),
+		Previstas: pairs("08:00", "12:00", "13:00", "17:00"),
+		Marcacoes: pairs("08:00", "12:00", "12:30", "17:00"),
 	}
 	inc, err := s.ProcessRules(settings, &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
 	if err != nil {
 		t.Fatalf("erro inesperado: %v", err)
 	}
-	got, ok := findByType(inc, "Almoço Reduzido")
+	got, ok := findByType(inc, TipoAlmocoReduzido)
 	if !ok {
-		t.Fatalf("esperava 'Almoço Reduzido'")
+		t.Fatalf("esperava %q", TipoAlmocoReduzido)
 	}
 	if got.Severity != domain.SeverityAlert {
 		t.Errorf("severidade deveria respeitar config ALERTA, veio %q", got.Severity)
 	}
 }
 
-func TestProcessRules_AlmocoNormalNaoInfringe(t *testing.T) {
-	s := NewAuditorService()
-	punch := &domain.DailyPunch{
-		Saida1:   strPtr("12:00"),
-		Entrada2: strPtr("13:00"), // 60min exatos
-	}
-	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
-	if err != nil {
-		t.Fatalf("erro inesperado: %v", err)
-	}
-	if _, ok := findByType(inc, "Almoço Reduzido"); ok {
-		t.Errorf("almoço de 60min não deveria infringir")
-	}
-}
-
 func TestProcessRules_InterjornadaCurta(t *testing.T) {
 	s := NewAuditorService()
-	yesterday := &domain.DailyPunch{Saida2: strPtr("22:00")}
-	today := &domain.DailyPunch{CollaboratorID: 1, Entrada1: strPtr("07:00")} // 9h de descanso
+	yesterday := &domain.DailyPunch{Marcacoes: pairs("14:00", "18:00", "19:00", "22:00")}
+	today := &domain.DailyPunch{Marcacoes: pairs("07:00", "")} // 9h de descanso
 
 	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, today, yesterday, time.Now(), true)
 	if err != nil {
 		t.Fatalf("erro inesperado: %v", err)
 	}
-	if _, ok := findByType(inc, "Interjornada Curta"); !ok {
-		t.Fatalf("esperava 'Interjornada Curta' (9h < 11h)")
+	if _, ok := findByType(inc, TipoInterjornada); !ok {
+		t.Fatalf("esperava %q (9h < 11h)", TipoInterjornada)
+	}
+}
+
+// A última saída do dia pode estar em qualquer bloco — inclusive no primeiro, quando o
+// expediente é corrido.
+func TestProcessRules_InterjornadaUsaUltimaSaidaDoDia(t *testing.T) {
+	s := NewAuditorService()
+	yesterday := &domain.DailyPunch{Marcacoes: pairs("15:00", "23:00")} // turno corrido
+	today := &domain.DailyPunch{Marcacoes: pairs("07:00", "")}          // 8h de descanso
+
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, today, yesterday, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if _, ok := findByType(inc, TipoInterjornada); !ok {
+		t.Fatalf("esperava %q usando a saída do turno corrido (8h < 11h)", TipoInterjornada)
 	}
 }
 
 func TestProcessRules_InterjornadaOk(t *testing.T) {
 	s := NewAuditorService()
-	yesterday := &domain.DailyPunch{Saida2: strPtr("18:00")}
-	today := &domain.DailyPunch{Entrada1: strPtr("08:00")} // 14h de descanso
+	yesterday := &domain.DailyPunch{Marcacoes: pairs("08:00", "12:00", "13:00", "18:00")}
+	today := &domain.DailyPunch{Marcacoes: pairs("08:00", "")} // 14h de descanso
 
 	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, today, yesterday, time.Now(), true)
 	if err != nil {
 		t.Fatalf("erro inesperado: %v", err)
 	}
-	if _, ok := findByType(inc, "Interjornada Curta"); ok {
+	if _, ok := findByType(inc, TipoInterjornada); ok {
 		t.Errorf("14h de descanso não deveria infringir")
 	}
 }
 
-func TestProcessRules_HoraExtraUsaCargaContratual(t *testing.T) {
+func TestProcessRules_HoraExtraUsaCargaPrevistaDoDia(t *testing.T) {
 	s := NewAuditorService()
-	// A jornada é por dia da semana; o punch precisa cair no mesmo DiaSemana da
-	// jornada sincronizada para o auditor encontrá-la.
-	date := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
-
-	// Jornada contratual de 6h (08-12 / 13-15) nesse dia da semana.
-	collab := &domain.Collaborator{
-		ID: 1,
-		Schedules: []domain.CollaboratorSchedule{
-			{DiaSemana: int(date.Weekday()), Entrada1: "08:00", Saida1: "12:00", Entrada2: "13:00", Saida2: "15:00"},
-		},
-	}
-	// Trabalhou 7.5h (08-12 / 13-16:30) => 1.5h extra sobre a carga de 6h.
 	punch := &domain.DailyPunch{
-		Date:     date,
-		Entrada1: strPtr("08:00"),
-		Saida1:   strPtr("12:00"),
-		Entrada2: strPtr("13:00"),
-		Saida2:   strPtr("16:30"),
+		Previstas: pairs("08:00", "12:00", "13:00", "15:00"), // 6h previstas
+		Marcacoes: pairs("08:00", "12:00", "13:00", "16:30"), // 7h30 trabalhadas
 	}
 
-	inc, err := s.ProcessRules(allEnabled(), collab, punch, nil, time.Now(), true)
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
 	if err != nil {
 		t.Fatalf("erro inesperado: %v", err)
 	}
-	// 1.5h extra => Alerta (>1h e <=2h). Se usasse 8h fixas, daria negativo (nenhuma).
-	if _, ok := findByType(inc, "Alerta de Hora Extra"); !ok {
-		t.Fatalf("esperava 'Alerta de Hora Extra' usando carga contratual de 6h, veio %+v", inc)
+	// 1h30 de extra => Alerta (>1h e <=2h).
+	if _, ok := findByType(inc, TipoAlertaHoraExtra); !ok {
+		t.Fatalf("esperava %q usando a carga prevista de 6h, veio %+v", TipoAlertaHoraExtra, inc)
 	}
 }
 
 func TestProcessRules_HoraExtraExcedenteCritico(t *testing.T) {
 	s := NewAuditorService()
-	// Sem schedule => usa 8h padrão. Trabalhou 11h => 3h extra => Crítico.
 	punch := &domain.DailyPunch{
-		Entrada1: strPtr("08:00"),
-		Saida1:   strPtr("12:00"),
-		Entrada2: strPtr("13:00"),
-		Saida2:   strPtr("20:00"),
+		Previstas: pairs("08:00", "12:00", "13:00", "17:00"), // 8h
+		Marcacoes: pairs("08:00", "12:00", "13:00", "20:00"), // 11h => 3h extra
 	}
 	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
 	if err != nil {
 		t.Fatalf("erro inesperado: %v", err)
 	}
-	got, ok := findByType(inc, "Hora Extra Excedente")
+	got, ok := findByType(inc, TipoHoraExtra)
 	if !ok {
-		t.Fatalf("esperava 'Hora Extra Excedente' (3h), veio %+v", inc)
+		t.Fatalf("esperava %q (3h), veio %+v", TipoHoraExtra, inc)
 	}
 	if got.Severity != domain.SeverityCritical {
 		t.Errorf("hora extra > 2h deveria ser CRITICO, veio %q", got.Severity)
 	}
 }
 
+// Turno corrido (2 batidas) passou a ser auditado: antes a regra exigia 4 batidas e
+// simplesmente ignorava esses colaboradores.
+func TestProcessRules_HoraExtraEmTurnoCorrido(t *testing.T) {
+	s := NewAuditorService()
+	punch := &domain.DailyPunch{
+		Previstas: pairs("08:00", "12:00"), // 4h previstas
+		Marcacoes: pairs("08:00", "14:30"), // 6h30 => 2h30 de extra
+	}
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if _, ok := findByType(inc, TipoHoraExtra); !ok {
+		t.Fatalf("esperava %q em jornada de bloco único, veio %+v", TipoHoraExtra, inc)
+	}
+}
+
+// Caso real do payload de sábado: previsão em bloco único de 7h20, batidas em dois
+// blocos somando 7h30 => 10min de extra, abaixo do limiar de alerta.
+func TestProcessRules_SabadoPrevisaoCorridaComBatidasEmDoisBlocos(t *testing.T) {
+	s := NewAuditorService()
+	punch := &domain.DailyPunch{
+		Previstas: pairs("07:00", "14:20"),                   // 7h20
+		Marcacoes: pairs("07:00", "12:09", "13:58", "16:19"), // 7h30
+	}
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 24}, punch, nil, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if len(inc) != 0 {
+		t.Fatalf("10min de excedente não deveria gerar infração, veio %+v", inc)
+	}
+}
+
+func TestProcessRules_SemCargaPrevistaViraInfracao(t *testing.T) {
+	s := NewAuditorService()
+	punch := &domain.DailyPunch{
+		Marcacoes: pairs("08:00", "12:00", "13:00", "17:00"), // trabalhou 8h
+		// Previstas vazio: a Secullum não informou jornada para o dia.
+	}
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	got, ok := findByType(inc, TipoCargaNaoApurada)
+	if !ok {
+		t.Fatalf("esperava %q, veio %+v", TipoCargaNaoApurada, inc)
+	}
+	if got.Severity != domain.SeverityCritical {
+		t.Errorf("carga não apurada deveria ser CRITICO, veio %q", got.Severity)
+	}
+	// E a jornada inteira NÃO pode virar hora extra.
+	if _, ok := findByType(inc, TipoHoraExtra); ok {
+		t.Errorf("sem carga prevista, hora extra não pode ser estimada")
+	}
+}
+
+func TestProcessRules_SemCargaESemTrabalhoNaoInfringe(t *testing.T) {
+	s := NewAuditorService()
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, &domain.DailyPunch{}, nil, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if len(inc) != 0 {
+		t.Fatalf("dia sem jornada e sem batidas (folga) não deveria gerar infração, veio %+v", inc)
+	}
+}
+
+func TestProcessRules_DiaNeutroNaoCobraCarga(t *testing.T) {
+	s := NewAuditorService()
+	punch := &domain.DailyPunch{
+		Neutro:    true,
+		Marcacoes: pairs("08:00", "12:00"),
+	}
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if _, ok := findByType(inc, TipoCargaNaoApurada); ok {
+		t.Errorf("dia neutro não tem carga a cumprir; não deveria virar infração de dado")
+	}
+}
+
+func TestProcessRules_TrabalhoEmDiaDeFolga(t *testing.T) {
+	s := NewAuditorService()
+	punch := &domain.DailyPunch{
+		Folga:     true,
+		Marcacoes: pairs("08:00", "12:00", "13:00", "17:00"),
+	}
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	got, ok := findByType(inc, TipoTrabalhoEmFolga)
+	if !ok {
+		t.Fatalf("esperava %q, veio %+v", TipoTrabalhoEmFolga, inc)
+	}
+	if got.Severity != domain.SeverityCritical {
+		t.Errorf("trabalho em folga deveria ser CRITICO, veio %q", got.Severity)
+	}
+	// Não duplica como hora extra nem como carga não apurada.
+	if _, ok := findByType(inc, TipoHoraExtra); ok {
+		t.Errorf("trabalho em folga não deve ser reportado também como hora extra")
+	}
+	if _, ok := findByType(inc, TipoCargaNaoApurada); ok {
+		t.Errorf("folga é jornada prevista zero, não falha de cadastro")
+	}
+}
+
 func TestProcessRules_ContagemImparApenasNoFechamento(t *testing.T) {
 	s := NewAuditorService()
-	// Só 1 batida (número ímpar).
-	punch := &domain.DailyPunch{CollaboratorID: 1, Entrada1: strPtr("08:00")}
+	punch := &domain.DailyPunch{Marcacoes: pairs("08:00", "")} // 1 batida (ímpar)
 	settings := &domain.TenantSettings{Esquecimento: true}
 
-	// Intra-dia (isClosing=false) sem jornada: regra suspensa => NÃO infringe.
+	// Intra-dia (isClosing=false) sem jornada prevista: regra suspensa => NÃO infringe.
 	incIntra, err := s.ProcessRules(settings, &domain.Collaborator{ID: 1}, punch, nil, time.Now(), false)
 	if err != nil {
 		t.Fatalf("erro inesperado (intra): %v", err)
 	}
-	if _, ok := findByType(incIntra, "Batida Esquecida"); ok {
+	if _, ok := findByType(incIntra, TipoBatidaEsquecida); ok {
 		t.Errorf("contagem ímpar NÃO deveria infringir durante o expediente sem jornada")
 	}
 
@@ -301,46 +403,42 @@ func TestProcessRules_ContagemImparApenasNoFechamento(t *testing.T) {
 	if err != nil {
 		t.Fatalf("erro inesperado (fechamento): %v", err)
 	}
-	if _, ok := findByType(incClose, "Batida Esquecida"); !ok {
+	if _, ok := findByType(incClose, TipoBatidaEsquecida); !ok {
 		t.Errorf("contagem ímpar no fechamento deveria infringir")
 	}
 }
 
-func TestProcessRules_EsquecimentoIntraDiaComJornada(t *testing.T) {
+func TestProcessRules_EsquecimentoIntraDiaUsaPrimeiraSaidaPrevista(t *testing.T) {
 	s := NewAuditorService()
-	// Só entrada batida; agora são 12:45 (passou 30min da saída p/ almoço de 12:00).
-	punch := &domain.DailyPunch{CollaboratorID: 1, Entrada1: strPtr("08:00")}
-	now := time.Date(2026, 7, 13, 12, 45, 0, 0, time.Local)
-
-	// A jornada é por dia da semana; precisa bater com o DiaSemana de `now`.
-	collab := &domain.Collaborator{
-		ID: 1,
-		Schedules: []domain.CollaboratorSchedule{
-			{DiaSemana: int(now.Weekday()), Entrada1: "08:00", Saida1: "12:00", Entrada2: "13:00", Saida2: "17:00"},
-		},
+	now := time.Date(2026, 7, 13, 12, 45, 0, 0, time.Local) // 45min após a saída prevista
+	punch := &domain.DailyPunch{
+		Previstas: pairs("08:00", "12:00", "13:00", "17:00"),
+		Marcacoes: pairs("08:00", ""), // só a entrada
 	}
 
-	inc, err := s.ProcessRules(&domain.TenantSettings{Esquecimento: true}, collab, punch, nil, now, false)
+	inc, err := s.ProcessRules(&domain.TenantSettings{Esquecimento: true}, &domain.Collaborator{ID: 1}, punch, nil, now, false)
 	if err != nil {
 		t.Fatalf("erro inesperado: %v", err)
 	}
-	if _, ok := findByType(inc, "Batida Esquecida"); !ok {
-		t.Fatalf("esperava 'Batida Esquecida' intra-dia (passou 30min do almoço)")
+	if _, ok := findByType(inc, TipoBatidaEsquecida); !ok {
+		t.Fatalf("esperava %q intra-dia (passou 30min da 1ª saída prevista)", TipoBatidaEsquecida)
 	}
 }
 
 func TestProcessRules_DadoInvalidoRetornaErro(t *testing.T) {
 	s := NewAuditorService()
 	punch := &domain.DailyPunch{
-		Saida1:   strPtr("99:99"), // horário inválido
-		Entrada2: strPtr("13:00"),
+		Previstas: pairs("08:00", "12:00", "13:00", "17:00"),
+		Marcacoes: pairs("08:00", "99:99", "13:00", "18:00"), // horário inválido
 	}
 	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
 	if err == nil {
 		t.Fatalf("esperava erro de dado inválido, veio nil")
 	}
-	// A inconsistência de almoço NÃO deve ser gerada a partir de dado inválido.
-	if _, ok := findByType(inc, "Almoço Reduzido"); ok {
-		t.Errorf("não deveria gerar infração a partir de horário inválido")
+	// Nenhuma infração de carga pode ser derivada de dado ilegível.
+	for _, tipo := range []string{TipoAlmocoReduzido, TipoHoraExtra, TipoAlertaHoraExtra, TipoCargaNaoApurada} {
+		if _, ok := findByType(inc, tipo); ok {
+			t.Errorf("não deveria gerar %q a partir de horário inválido", tipo)
+		}
 	}
 }

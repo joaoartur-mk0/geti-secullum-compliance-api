@@ -17,12 +17,18 @@ type Collaborator struct {
 	Schedules []CollaboratorSchedule
 }
 
-// CollaboratorSchedule representa a jornada de trabalho contratual prevista para um
-// dia específico da semana (a Secullum define a jornada por dia, não um bloco único
-// para a semana toda — sábados/domingos costumam ter cargas diferentes).
+// CollaboratorSchedule é a grade semanal cadastrada no horário do colaborador, mantida
+// como dado de referência (telas de cadastro).
 //
-// DiaSemana segue a mesma convenção do time.Weekday do Go e do DiaSemana da Secullum:
-// 0 = Domingo, 1 = Segunda, ..., 6 = Sábado.
+// ATENÇÃO: NÃO é a fonte da carga usada na auditoria. A grade não reflete o que a
+// Secullum efetivamente aplica no dia — diverge em escalas, horário alternativo,
+// feriados e trocas pontuais. A carga esperada de cada data vem de DailyPunch.Previstas
+// (campos Memoria* da resposta de batidas).
+//
+// A convenção de DiaSemana da Secullum neste campo NÃO está confirmada (a grade de
+// exemplo tem 6 dias de 440min e um único dia zerado no índice 6, o que sugere
+// 0=Segunda ... 6=Domingo, e não a convenção do time.Weekday do Go). Confirme antes de
+// usar este campo para qualquer decisão por dia da semana.
 type CollaboratorSchedule struct {
 	DiaSemana    int
 	Entrada1     string // Formato esperado "HH:MM"

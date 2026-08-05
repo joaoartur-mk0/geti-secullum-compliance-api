@@ -32,7 +32,12 @@ type Config struct {
 	MaxRequestsPerMinute int    // default 100
 }
 
-// secullumPunchResponse mapeia apenas os campos de batida que importam do JSON da Secullum.
+// secullumPunchResponse mapeia os campos de batida que importam do JSON da Secullum.
+//
+// Os campos Memoria* trazem a jornada que a Secullum efetivamente alocou para o
+// funcionário NAQUELE dia — já resolvendo escala, horário alternativo, feriado e trocas
+// pontuais. É daí que sai a carga esperada da auditoria; a grade semanal do horário
+// (endpoint Horarios) não serve, pois diverge do que foi aplicado no dia.
 type secullumPunchResponse struct {
 	FuncionarioId int     `json:"FuncionarioId"`
 	Data          string  `json:"Data"`
@@ -40,6 +45,49 @@ type secullumPunchResponse struct {
 	Saida1        *string `json:"Saida1"`
 	Entrada2      *string `json:"Entrada2"`
 	Saida2        *string `json:"Saida2"`
+	Entrada3      *string `json:"Entrada3"`
+	Saida3        *string `json:"Saida3"`
+	Entrada4      *string `json:"Entrada4"`
+	Saida4        *string `json:"Saida4"`
+	Entrada5      *string `json:"Entrada5"`
+	Saida5        *string `json:"Saida5"`
+
+	MemoriaEntrada1 *string `json:"MemoriaEntrada1"`
+	MemoriaSaida1   *string `json:"MemoriaSaida1"`
+	MemoriaEntrada2 *string `json:"MemoriaEntrada2"`
+	MemoriaSaida2   *string `json:"MemoriaSaida2"`
+	MemoriaEntrada3 *string `json:"MemoriaEntrada3"`
+	MemoriaSaida3   *string `json:"MemoriaSaida3"`
+	MemoriaEntrada4 *string `json:"MemoriaEntrada4"`
+	MemoriaSaida4   *string `json:"MemoriaSaida4"`
+	MemoriaEntrada5 *string `json:"MemoriaEntrada5"`
+	MemoriaSaida5   *string `json:"MemoriaSaida5"`
+
+	Folga  bool `json:"Folga"`
+	Neutro bool `json:"Neutro"`
+}
+
+// marcacoes devolve os 5 pares de batidas reais, preservando as posições vazias (uma
+// contagem ímpar de marcações é o sinal da regra de batida esquecida).
+func (r secullumPunchResponse) marcacoes() []domain.PunchPair {
+	return []domain.PunchPair{
+		{Entrada: normalizeTime(r.Entrada1), Saida: normalizeTime(r.Saida1)},
+		{Entrada: normalizeTime(r.Entrada2), Saida: normalizeTime(r.Saida2)},
+		{Entrada: normalizeTime(r.Entrada3), Saida: normalizeTime(r.Saida3)},
+		{Entrada: normalizeTime(r.Entrada4), Saida: normalizeTime(r.Saida4)},
+		{Entrada: normalizeTime(r.Entrada5), Saida: normalizeTime(r.Saida5)},
+	}
+}
+
+// previstas devolve os pares da jornada alocada para o dia (campos Memoria*).
+func (r secullumPunchResponse) previstas() []domain.PunchPair {
+	return []domain.PunchPair{
+		{Entrada: normalizeTime(r.MemoriaEntrada1), Saida: normalizeTime(r.MemoriaSaida1)},
+		{Entrada: normalizeTime(r.MemoriaEntrada2), Saida: normalizeTime(r.MemoriaSaida2)},
+		{Entrada: normalizeTime(r.MemoriaEntrada3), Saida: normalizeTime(r.MemoriaSaida3)},
+		{Entrada: normalizeTime(r.MemoriaEntrada4), Saida: normalizeTime(r.MemoriaSaida4)},
+		{Entrada: normalizeTime(r.MemoriaEntrada5), Saida: normalizeTime(r.MemoriaSaida5)},
+	}
 }
 
 // secullumFuncionarioResponse mapeia identidade + o número do horário do colaborador.
@@ -213,7 +261,8 @@ func (c *secullumClient) GetDailyPunches(tenant *domain.Tenant, date time.Time) 
 		// Campos de batida podem trazer um marcador de abono/afastamento (ex.: "INSS",
 		// "FOLGA", "FÉRIAS") em vez de um horário. Isso NÃO é erro de dado: é um dia de
 		// ausência legítima. Registramos como informação e tratamos como "sem batida".
-		if marker := abonoMarker(raw.Entrada1, raw.Saida1, raw.Entrada2, raw.Saida2); marker != "" {
+		if marker := abonoMarker(raw.Entrada1, raw.Saida1, raw.Entrada2, raw.Saida2,
+			raw.Entrada3, raw.Saida3, raw.Entrada4, raw.Saida4, raw.Entrada5, raw.Saida5); marker != "" {
 			log.Printf("[Info Secullum] Funcionário %d em %s: marcador %q (abono/afastamento) — tratado como ausência.",
 				raw.FuncionarioId, parsedDate.Format("2006-01-02"), marker)
 		}
@@ -221,10 +270,10 @@ func (c *secullumClient) GetDailyPunches(tenant *domain.Tenant, date time.Time) 
 		domainPunches = append(domainPunches, domain.DailyPunch{
 			CollaboratorID: raw.FuncionarioId,
 			Date:           parsedDate,
-			Entrada1:       normalizeTime(raw.Entrada1),
-			Saida1:         normalizeTime(raw.Saida1),
-			Entrada2:       normalizeTime(raw.Entrada2),
-			Saida2:         normalizeTime(raw.Saida2),
+			Marcacoes:      raw.marcacoes(),
+			Previstas:      raw.previstas(),
+			Folga:          raw.Folga,
+			Neutro:         raw.Neutro,
 		})
 	}
 

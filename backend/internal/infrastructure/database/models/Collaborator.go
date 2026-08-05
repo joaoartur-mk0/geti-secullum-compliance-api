@@ -15,7 +15,7 @@ type Collaborator struct {
 type CollaboratorSchedule struct {
 	ID             int    `gorm:"primaryKey;autoIncrement" json:"id"`
 	CollaboratorID int    `gorm:"not null;index" json:"collaborator_id"`
-	DiaSemana      int    `gorm:"not null" json:"dia_semana"` // 0=Domingo ... 6=Sábado (mesma convenção do time.Weekday)
+	DiaSemana      int    `gorm:"not null" json:"dia_semana"` // índice do dia conforme a Secullum (convenção não confirmada — ver domain.CollaboratorSchedule)
 	Entrada1       string `gorm:"type:varchar(5)" json:"entrada_1"`
 	Saida1         string `gorm:"type:varchar(5)" json:"saida_1"`
 	Entrada2       string `gorm:"type:varchar(5)" json:"entrada_2"`
