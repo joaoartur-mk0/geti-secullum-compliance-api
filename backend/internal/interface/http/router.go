@@ -27,6 +27,7 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 	staffRepo := repositories.NewStaffRepository(db)
 	reportRepo := repositories.NewReportRepository(db)
 	collaboratorRepo := repositories.NewCollaboratorRepository(db)
+	userRepo := repositories.NewUserRepository(db)
 
 	// Documentação (Swagger UI em /swagger, spec em /openapi.yaml)
 	swagger.Register(router)
@@ -39,10 +40,29 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 	reportHandler := handlers.NewReportHandler(reportRepo)
 	collaboratorHandler := handlers.NewCollaboratorHandler(collaboratorRepo)
 	whatsappHandler := handlers.NewWhatsAppHandler(whatsappMgr, whatsappPrefix)
+	userHandler := handlers.NewUserHandler(userRepo)
 
-	// Agrupamento de Rotas V1
+	// Login é a única rota de /api/v1 pública: sem token não há como obter um, e o
+	// cadastro de novos usuários (register) passa a exigir um usuário já autenticado.
+	// O primeiro usuário (super admin) é criado via seed — ver
+	// docs/05_Auth_Backend_Contract.md.
+	publicV1 := router.Group("/api/v1")
+	publicV1.POST("/auth/login", userHandler.Login)
+
+	// Agrupamento de Rotas V1 (todas exigem "Authorization: Bearer <token>")
 	v1 := router.Group("/api/v1")
+	v1.Use(middleware.RequireAuth())
 	{
+		// Autenticação (cadastro de usuário exige um usuário já logado)
+		v1.POST("/auth/register", userHandler.Register)
+
+		// Usuários
+		v1.GET("/users", userHandler.List)
+		v1.GET("/users/:id", userHandler.Get)
+		v1.PUT("/users/:id/email", userHandler.UpdateEmail)
+		v1.PUT("/users/:id/password", userHandler.UpdatePassword)
+		v1.DELETE("/users/:id", userHandler.Delete)
+
 		// Auditoria
 		v1.POST("/audit/trigger", auditHandler.TriggerAudit)
 

@@ -102,8 +102,25 @@ export interface HealthResponse {
 
 export interface ApiErrorBody {
   error?: {
-    code?: 'VALIDATION' | 'NOT_FOUND' | 'CONFLICT' | 'INTERNAL'
+    code?: 'VALIDATION' | 'NOT_FOUND' | 'CONFLICT' | 'INTERNAL' | 'UNAUTHORIZED'
     message?: string
     details?: string | null
   }
+}
+
+// Autenticação — ver docs/05_Auth_Backend_Contract.md
+export interface User {
+  id: number
+  name: string
+  email: string
+}
+
+export interface LoginRequest {
+  email: string
+  password: string
+}
+
+export interface LoginResponse {
+  token: string
+  user: User
 }

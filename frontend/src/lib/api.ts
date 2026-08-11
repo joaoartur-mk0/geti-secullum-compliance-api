@@ -3,6 +3,8 @@ import type {
   Collaborator,
   CreateTenantRequest,
   HealthResponse,
+  LoginRequest,
+  LoginResponse,
   Report,
   Settings,
   Staff,
@@ -11,6 +13,7 @@ import type {
   WhatsAppConnectResponse,
   WhatsAppStatus,
 } from './types'
+import { endSession, getToken } from './session'
 
 // Endereço da API: vem da variável de ambiente de build do Vite (VITE_API_URL).
 // É resolvida em BUILD TIME — em produção, defina VITE_API_URL ao buildar o frontend
@@ -29,11 +32,17 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken()
+
   let res: Response
   try {
     res = await fetch(`${API_URL}${path}`, {
       ...init,
-      headers: { 'Content-Type': 'application/json', ...init?.headers },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
     })
   } catch {
     throw new ApiError(0, 'OFFLINE', 'Não foi possível falar com a API. Verifique se o backend está no ar.')
@@ -46,6 +55,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // corpo não-JSON: mantém mensagem genérica
     }
+
+    // Sessão expirada/inválida: limpa e manda para o login. Não faz isso para a própria
+    // chamada de login (que devolve 400, não 401, em caso de credenciais erradas).
+    if (res.status === 401) {
+      endSession()
+      if (location.pathname !== '/login') location.href = '/login'
+    }
+
     throw new ApiError(
       res.status,
       body.error?.code ?? 'INTERNAL',
@@ -58,6 +75,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<HealthResponse>('/health'),
+
+  login: (body: LoginRequest) =>
+    request<LoginResponse>('/api/v1/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   triggerAudit: (tenantId: number) =>
     request<{ message: string; tenant_id: number; status: string }>('/api/v1/audit/trigger', {

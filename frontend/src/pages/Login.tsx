@@ -2,24 +2,34 @@ import { ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { Button, Field, Input } from '../components/ui'
+import { api, ApiError } from '../lib/api'
 import { getSession, startSession } from '../lib/session'
 
 export default function Login() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   if (getSession()) return <Navigate to="/" replace />
 
-  function submit(event: React.FormEvent) {
+  async function submit(event: React.FormEvent) {
     event.preventDefault()
     if (!email.trim() || !password.trim()) {
       setError('Preencha e-mail e senha para entrar.')
       return
     }
-    startSession(email.trim())
-    navigate('/', { replace: true })
+    setBusy(true)
+    setError(null)
+    try {
+      const { token, user } = await api.login({ email: email.trim(), password })
+      startSession({ token, user })
+      navigate('/', { replace: true })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Erro inesperado ao entrar.')
+      setBusy(false)
+    }
   }
 
   return (
@@ -57,8 +67,7 @@ export default function Login() {
           <div className="mb-2">
             <h2 className="text-xl font-semibold tracking-tight">Entrar no painel</h2>
             <p className="mt-1 text-sm text-ink-soft">
-              Acesso provisório de validação — a autenticação definitiva chega com o modo
-              multiempresa.
+              Acesso restrito à equipe interna. Sem conta? Fale com quem administra o painel.
             </p>
           </div>
 
@@ -83,7 +92,9 @@ export default function Login() {
 
           {error && <p className="text-sm font-medium text-critico">{error}</p>}
 
-          <Button type="submit">Entrar</Button>
+          <Button type="submit" busy={busy}>
+            Entrar
+          </Button>
         </form>
       </div>
     </div>

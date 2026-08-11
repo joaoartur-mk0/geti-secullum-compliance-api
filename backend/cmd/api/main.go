@@ -12,6 +12,8 @@ import (
 	"gorm.io/gorm"
 
 	// Ajuste "seu_projeto" para o nome real do seu módulo Go
+	"backend/internal/auth"
+	"backend/internal/domain"
 	"backend/internal/infrastructure/database/models"
 	"backend/internal/infrastructure/database/repositories"
 	"backend/internal/infrastructure/evolution"
@@ -43,11 +45,16 @@ func main() {
 		&models.CollaboratorSchedule{},
 		&models.Staff{},
 		&models.Report{},
+		&models.User{},
 	)
 	if err != nil {
 		log.Fatalf("Falha no AutoMigrate do GORM: %v", err)
 	}
 	log.Println("Migração do banco de dados concluída.")
+
+	// Como o cadastro de usuários (/auth/register) agora exige um usuário já
+	// autenticado, o super admin inicial só pode entrar via seed (env vars).
+	seedSuperAdmin(repositories.NewUserRepository(db))
 
 	// 2. Configuração e Conexão com RabbitMQ
 	rabbitURL := os.Getenv("RABBITMQ_URL")
@@ -221,4 +228,37 @@ func main() {
 	if err := router.Run(":" + port); err != nil {
 		log.Fatalf("Falha ao iniciar o servidor HTTP: %v", err)
 	}
+}
+
+// seedSuperAdmin cria o usuário inicial a partir de SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD
+// (SEED_ADMIN_NAME é opcional). É o único jeito de obter o primeiro usuário, já que
+// /auth/register exige um token válido. Não faz nada se as env vars não estiverem
+// definidas ou se o e-mail já existir (idempotente entre reinícios).
+func seedSuperAdmin(userRepo domain.UserRepository) {
+	email := os.Getenv("SEED_ADMIN_EMAIL")
+	password := os.Getenv("SEED_ADMIN_PASSWORD")
+	if email == "" || password == "" {
+		log.Println("SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD não definidos — seed do super admin ignorado.")
+		return
+	}
+
+	if _, err := userRepo.GetByEmail(email); err == nil {
+		log.Printf("Super admin %s já existe — seed ignorado.", email)
+		return
+	}
+
+	name := os.Getenv("SEED_ADMIN_NAME")
+	if name == "" {
+		name = "Super Admin"
+	}
+
+	hashed, err := auth.HashPassword(password)
+	if err != nil {
+		log.Fatalf("Falha ao gerar hash da senha do super admin: %v", err)
+	}
+
+	if err := userRepo.Save(&domain.User{Name: name, Email: email, Password: hashed}); err != nil {
+		log.Fatalf("Falha ao criar o super admin via seed: %v", err)
+	}
+	log.Printf("Super admin %s criado via seed.", email)
 }

@@ -24,6 +24,11 @@ services:
       - EVOLUTION_API_URL=${EVOLUTION_API_URL:-}
       - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-}
       - EVOLUTION_INSTANCE_PREFIX=${EVOLUTION_INSTANCE_PREFIX:-tenant}
+      # Autenticação do painel (login JWT + seed do super admin). Vêm do .env.
+      - JWT_SECRET=${JWT_SECRET:-}
+      - SEED_ADMIN_EMAIL=${SEED_ADMIN_EMAIL:-}
+      - SEED_ADMIN_PASSWORD=${SEED_ADMIN_PASSWORD:-}
+      - SEED_ADMIN_NAME=${SEED_ADMIN_NAME:-}
     depends_on:
       db:
         condition: service_healthy

@@ -156,7 +156,7 @@ export default function AppShell() {
                 <span className="truncate">{state.tenant.name}</span>
               </p>
             ))}
-          <p className="truncate text-xs text-side-faint">{session.email}</p>
+          <p className="truncate text-xs text-side-faint">{session.user.email}</p>
           <button
             type="button"
             onClick={logout}

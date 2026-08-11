@@ -11,9 +11,16 @@ servers:
   - url: http://localhost:8080
     description: Ambiente de desenvolvimento local
 
+security:
+  - bearerAuth: []
+
 tags:
   - name: Infra
     description: Saúde da infraestrutura
+  - name: Autenticação
+    description: >
+      Login e gestão de usuários do painel interno. Ver docs/05_Auth_Backend_Contract.md
+      para o contrato completo (fluxo, formato do token, seed do primeiro usuário).
   - name: Auditoria
     description: Disparo e consulta de auditorias
   - name: Tenants
@@ -30,6 +37,7 @@ paths:
     get:
       tags: [Infra]
       summary: Verifica a saúde da infraestrutura (DB e broker)
+      security: []
       responses:
         "200":
           description: Tudo operacional
@@ -43,6 +51,134 @@ paths:
                   rabbitmq: { type: string, example: up }
         "503":
           description: Banco ou broker indisponível
+
+  /api/v1/auth/login:
+    post:
+      tags: [Autenticação]
+      summary: Autentica um usuário e devolve um token JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login bem-sucedido
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, description: "JWT (Bearer), válido por 24h" }
+                  user: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /api/v1/auth/register:
+    post:
+      tags: [Autenticação]
+      summary: Cadastra um novo usuário (requer um usuário já autenticado)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Usuário criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  user: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+
+  /api/v1/users:
+    get:
+      tags: [Autenticação]
+      summary: Lista usuários
+      responses:
+        "200":
+          description: Lista de usuários
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+
+  /api/v1/users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      tags: [Autenticação]
+      summary: Busca um usuário por id
+      responses:
+        "200":
+          description: Usuário encontrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    delete:
+      tags: [Autenticação]
+      summary: Exclui um usuário
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/users/{id}/email:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    put:
+      tags: [Autenticação]
+      summary: Atualiza o e-mail de um usuário
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+
+  /api/v1/users/{id}/password:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    put:
+      tags: [Autenticação]
+      summary: Atualiza a senha de um usuário
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
 
   /api/v1/audit/trigger:
     post:
@@ -290,12 +426,27 @@ paths:
                     items: { $ref: "#/components/schemas/Report" }
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Token obtido em POST /api/v1/auth/login. Enviar em todas as rotas de /api/v1,
+        exceto /api/v1/auth/login e /health: header "Authorization: Bearer <token>".
+
   parameters:
     TenantId:
       name: id
       in: path
       required: true
       description: Id local do tenant
+      schema: { type: integer }
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: Id do usuário
       schema: { type: integer }
 
   responses:
@@ -309,6 +460,11 @@ components:
               message: { type: string }
     ValidationError:
       description: Entrada inválida
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnauthorizedError:
+      description: Token ausente, inválido ou expirado
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -338,9 +494,31 @@ components:
           properties:
             code:
               type: string
-              enum: [VALIDATION, NOT_FOUND, CONFLICT, INTERNAL]
+              enum: [VALIDATION, NOT_FOUND, CONFLICT, INTERNAL, UNAUTHORIZED]
             message: { type: string }
             details: { type: string, nullable: true }
+
+    User:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        name: { type: string, example: "Fulano de Tal" }
+        email: { type: string, format: email, example: "fulano@empresa.com" }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, format: password, minLength: 8 }
 
     TriggerRequest:
       type: object
