@@ -17,6 +17,7 @@ var statusByKind = map[domain.ErrorKind]int{
 	domain.KindValidation: http.StatusBadRequest,
 	domain.KindNotFound:   http.StatusNotFound,
 	domain.KindConflict:   http.StatusConflict,
+	domain.KindForbidden:  http.StatusForbidden,
 	domain.KindInternal:   http.StatusInternalServerError,
 }
 

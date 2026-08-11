@@ -1,10 +1,11 @@
 package domain
 
 type User struct {
-	ID       uint   `json:"id"`
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	ID           uint   `json:"id"`
+	Name         string `json:"name"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
+	IsSuperAdmin bool   `json:"is_super_admin"`
 }
 
 type UserRepository interface {

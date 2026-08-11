@@ -227,10 +227,11 @@ func (r *userRepository) UpdateName(user *domain.User) error {
 
 func toDomainUser(model *models.User) *domain.User {
 	domainUser := &domain.User{
-		ID:       model.ID,
-		Name:     model.Name,
-		Email:    model.Email,
-		Password: model.Password,
+		ID:           model.ID,
+		Name:         model.Name,
+		Email:        model.Email,
+		Password:     model.Password,
+		IsSuperAdmin: model.IsSuperAdmin,
 	}
 	return domainUser
 }
@@ -245,9 +246,10 @@ func mapUsers(modelList []models.User) []domain.User {
 
 func toModelUser(user *domain.User) models.User {
 	modelUser := models.User{
-		Name:     user.Name,
-		Email:    user.Email,
-		Password: user.Password,
+		Name:         user.Name,
+		Email:        user.Email,
+		Password:     user.Password,
+		IsSuperAdmin: user.IsSuperAdmin,
 	}
 	return modelUser
 }

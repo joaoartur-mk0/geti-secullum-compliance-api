@@ -46,6 +46,7 @@ func main() {
 		&models.Staff{},
 		&models.Report{},
 		&models.User{},
+		&models.UserTenant{},
 	)
 	if err != nil {
 		log.Fatalf("Falha no AutoMigrate do GORM: %v", err)
@@ -257,7 +258,7 @@ func seedSuperAdmin(userRepo domain.UserRepository) {
 		log.Fatalf("Falha ao gerar hash da senha do super admin: %v", err)
 	}
 
-	if err := userRepo.Save(&domain.User{Name: name, Email: email, Password: hashed}); err != nil {
+	if err := userRepo.Save(&domain.User{Name: name, Email: email, Password: hashed, IsSuperAdmin: true}); err != nil {
 		log.Fatalf("Falha ao criar o super admin via seed: %v", err)
 	}
 	log.Printf("Super admin %s criado via seed.", email)

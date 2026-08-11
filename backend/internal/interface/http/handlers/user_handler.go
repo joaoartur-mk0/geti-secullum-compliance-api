@@ -11,11 +11,12 @@ import (
 )
 
 type UserHandler struct {
-	userRepo domain.UserRepository
+	userRepo       domain.UserRepository
+	userTenantRepo domain.UserTenantRepository
 }
 
-func NewUserHandler(repo domain.UserRepository) *UserHandler {
-	return &UserHandler{userRepo: repo}
+func NewUserHandler(repo domain.UserRepository, userTenantRepo domain.UserTenantRepository) *UserHandler {
+	return &UserHandler{userRepo: repo, userTenantRepo: userTenantRepo}
 }
 
 type registerRequest struct {
@@ -38,13 +39,14 @@ type updatePasswordRequest struct {
 }
 
 type userResponse struct {
-	ID    uint   `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	ID           uint   `json:"id"`
+	Name         string `json:"name"`
+	Email        string `json:"email"`
+	IsSuperAdmin bool   `json:"is_super_admin"`
 }
 
 func toUserResponse(u domain.User) userResponse {
-	return userResponse{ID: u.ID, Name: u.Name, Email: u.Email}
+	return userResponse{ID: u.ID, Name: u.Name, Email: u.Email, IsSuperAdmin: u.IsSuperAdmin}
 }
 
 // userIDParam extrai o :id da rota como uint (o domínio de User usa gorm.Model,
@@ -109,15 +111,28 @@ func (h *UserHandler) Login(c *gin.Context) {
 		return
 	}
 
-	token, err := auth.GenerateToken(user.ID, user.Email)
+	token, err := auth.GenerateToken(user.ID, user.Email, user.IsSuperAdmin)
 	if err != nil {
 		httperr.Respond(c, domain.NewInternal(op, "falha ao gerar token", err))
 		return
 	}
 
+	// Tenants aos quais o usuário tem acesso, para o frontend montar o seletor de
+	// tenant sem precisar de uma segunda chamada logo após o login.
+	tenants, err := h.userTenantRepo.ListTenantsForUser(user.ID)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	tenantIDs := make([]int, 0, len(tenants))
+	for _, t := range tenants {
+		tenantIDs = append(tenantIDs, t.ID)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"token": token,
-		"user":  toUserResponse(*user),
+		"token":      token,
+		"user":       toUserResponse(*user),
+		"tenant_ids": tenantIDs,
 	})
 }
 
@@ -155,6 +170,30 @@ func (h *UserHandler) List(c *gin.Context) {
 		out = append(out, toUserResponse(u))
 	}
 	c.JSON(http.StatusOK, gin.H{"users": out})
+}
+
+// ListTenants — GET /api/v1/users/:id/tenants
+// Lista os tenants aos quais o usuário tem acesso (o próprio usuário ou super admin).
+func (h *UserHandler) ListTenants(c *gin.Context) {
+	const op = "UserHandler.ListTenants"
+
+	id, err := userIDParam(c, op)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	tenants, err := h.userTenantRepo.ListTenantsForUser(id)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	out := make([]tenantResponse, 0, len(tenants))
+	for _, t := range tenants {
+		out = append(out, toTenantResponse(t))
+	}
+	c.JSON(http.StatusOK, gin.H{"tenants": out})
 }
 
 // UpdateEmail — PUT /api/v1/users/:id/email

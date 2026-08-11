@@ -10,6 +10,7 @@ const (
 	KindValidation ErrorKind = "VALIDATION" // entrada inválida -> 400
 	KindNotFound   ErrorKind = "NOT_FOUND"  // recurso inexistente -> 404
 	KindConflict   ErrorKind = "CONFLICT"   // violação de unicidade/estado -> 409
+	KindForbidden  ErrorKind = "FORBIDDEN"  // sem permissão/vínculo com o recurso -> 403
 	KindInternal   ErrorKind = "INTERNAL"   // falha inesperada -> 500
 )
 
@@ -57,6 +58,10 @@ func NewNotFound(op, message string, err error) *AppError {
 
 func NewConflict(op, message string, err error) *AppError {
 	return &AppError{Kind: KindConflict, Op: op, Message: message, Err: err}
+}
+
+func NewForbidden(op, message string, err error) *AppError {
+	return &AppError{Kind: KindForbidden, Op: op, Message: message, Err: err}
 }
 
 func NewInternal(op, message string, err error) *AppError {

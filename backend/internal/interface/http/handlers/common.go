@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"backend/internal/domain"
+	"backend/internal/interface/http/middleware"
 )
 
 // bindJSON faz o parse do corpo JSON e devolve um erro de validação estruturado
@@ -27,4 +28,29 @@ func idParam(c *gin.Context, op, name string) (int, error) {
 			WithDetails(name + " deve ser um número inteiro")
 	}
 	return id, nil
+}
+
+// ensureTenantAccess garante que o usuário autenticado (via contexto, injetado pelo
+// RequireAuth) seja super admin ou tenha vínculo com o tenant informado. Usado nos
+// handlers cujo recurso não carrega o id do tenant diretamente no parâmetro de rota
+// (ex.: staffs, cujo tenant só é conhecido depois de carregar o registro) — nesses
+// casos o RequireTenantAccess do router não se aplica.
+func ensureTenantAccess(c *gin.Context, repo domain.UserTenantRepository, op string, tenantID int) error {
+	if v, ok := c.Get(middleware.ContextIsSuperAdminKey); ok {
+		if isSuperAdmin, _ := v.(bool); isSuperAdmin {
+			return nil
+		}
+	}
+
+	userID, _ := c.Get(middleware.ContextUserIDKey)
+	uid, _ := userID.(uint)
+
+	hasAccess, err := repo.HasAccess(uid, tenantID)
+	if err != nil {
+		return err
+	}
+	if !hasAccess {
+		return domain.NewForbidden(op, "você não tem acesso a este tenant", nil)
+	}
+	return nil
 }

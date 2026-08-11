@@ -11,6 +11,7 @@ import (
 
 	"backend/internal/domain"
 	"backend/internal/interface/http/httperr"
+	"backend/internal/interface/http/middleware"
 )
 
 type CreateTenantRequest struct {
@@ -26,12 +27,13 @@ type UpdateTenantRequest struct {
 }
 
 type TenantHandler struct {
-	tenantRepo domain.TenantRepository
-	publisher  EventPublisher
+	tenantRepo     domain.TenantRepository
+	userTenantRepo domain.UserTenantRepository
+	publisher      EventPublisher
 }
 
-func NewTenantHandler(repo domain.TenantRepository, publisher EventPublisher) *TenantHandler {
-	return &TenantHandler{tenantRepo: repo, publisher: publisher}
+func NewTenantHandler(repo domain.TenantRepository, userTenantRepo domain.UserTenantRepository, publisher EventPublisher) *TenantHandler {
+	return &TenantHandler{tenantRepo: repo, userTenantRepo: userTenantRepo, publisher: publisher}
 }
 
 // publishProvisioning enfileira o pedido de sincronização de colaboradores do tenant.
@@ -133,10 +135,34 @@ func (h *TenantHandler) Sync(c *gin.Context) {
 }
 
 // List — GET /api/v1/tenants?include_inactive=true
+// Super admins veem todos os tenants; demais usuários só os tenants aos quais têm
+// vínculo (nunca a lista completa — evita vazar a existência de outros clientes).
 func (h *TenantHandler) List(c *gin.Context) {
 	includeInactive := c.Query("include_inactive") == "true"
 
-	tenants, err := h.tenantRepo.List(includeInactive)
+	var (
+		tenants []*domain.Tenant
+		err     error
+	)
+
+	if isSuperAdmin, _ := c.Get(middleware.ContextIsSuperAdminKey); isSuperAdmin == true {
+		tenants, err = h.tenantRepo.List(includeInactive)
+	} else {
+		userID, _ := c.Get(middleware.ContextUserIDKey)
+		uid, _ := userID.(uint)
+
+		tenants, err = h.userTenantRepo.ListTenantsForUser(uid)
+		if err == nil && !includeInactive {
+			active := make([]*domain.Tenant, 0, len(tenants))
+			for _, t := range tenants {
+				if t.Active {
+					active = append(active, t)
+				}
+			}
+			tenants = active
+		}
+	}
+
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -147,6 +173,81 @@ func (h *TenantHandler) List(c *gin.Context) {
 		out = append(out, toTenantResponse(t))
 	}
 	c.JSON(http.StatusOK, gin.H{"tenants": out})
+}
+
+type addUserToTenantRequest struct {
+	UserID uint `json:"user_id" binding:"required"`
+}
+
+// AddUser — POST /api/v1/tenants/:id/users
+// Vincula um usuário já existente ao tenant (só super admin).
+func (h *TenantHandler) AddUser(c *gin.Context) {
+	const op = "TenantHandler.AddUser"
+
+	tenantID, err := idParam(c, op, "id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	var req addUserToTenantRequest
+	if err := bindJSON(c, op, &req); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	if err := h.userTenantRepo.AddUserToTenant(req.UserID, tenantID); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"message": "usuário vinculado ao tenant com sucesso"})
+}
+
+// RemoveUser — DELETE /api/v1/tenants/:id/users/:userId
+// Remove o vínculo de um usuário com o tenant (só super admin).
+func (h *TenantHandler) RemoveUser(c *gin.Context) {
+	const op = "TenantHandler.RemoveUser"
+
+	tenantID, err := idParam(c, op, "id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	userID, err := idParam(c, op, "userId")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	if err := h.userTenantRepo.RemoveUserFromTenant(uint(userID), tenantID); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "vínculo removido com sucesso"})
+}
+
+// ListUsers — GET /api/v1/tenants/:id/users
+// Lista os usuários com acesso ao tenant (membros do próprio tenant ou super admin).
+func (h *TenantHandler) ListUsers(c *gin.Context) {
+	const op = "TenantHandler.ListUsers"
+
+	tenantID, err := idParam(c, op, "id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	users, err := h.userTenantRepo.ListUsersForTenant(tenantID)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	out := make([]userResponse, 0, len(users))
+	for _, u := range users {
+		out = append(out, toUserResponse(u))
+	}
+	c.JSON(http.StatusOK, gin.H{"users": out})
 }
 
 // Get — GET /api/v1/tenants/:id

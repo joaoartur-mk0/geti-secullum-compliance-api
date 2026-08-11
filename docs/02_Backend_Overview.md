@@ -160,22 +160,34 @@ A spec (`internal/interface/http/swagger/openapi.yaml`) é embutida no binário 
 `go:embed` — não precisa de arquivo em disco nem de geração externa.
 
 ### Endpoints
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| GET | `/health` | Saúde de DB + broker |
-| POST | `/api/v1/audit/trigger` | Enfileira auditoria |
-| GET | `/api/v1/tenants` | Lista tenants (`?include_inactive=true`) |
-| POST | `/api/v1/tenants` | Cadastra tenant |
-| GET | `/api/v1/tenants/:id` | Busca tenant |
-| PUT | `/api/v1/tenants/:id` | Atualiza tenant |
-| PATCH | `/api/v1/tenants/:id/deactivate` | Desativa tenant |
-| GET | `/api/v1/tenants/:id/settings` | Busca configurações |
-| PUT | `/api/v1/tenants/:id/settings` | Atualiza configurações |
-| GET | `/api/v1/tenants/:id/staffs` | Lista responsáveis |
-| POST | `/api/v1/tenants/:id/staffs` | Cadastra responsável |
-| PUT | `/api/v1/staffs/:staffId` | Atualiza responsável |
-| DELETE | `/api/v1/staffs/:staffId` | Exclui responsável |
-| GET | `/api/v1/tenants/:id/reports` | Lista relatórios (painel) |
+Todas as rotas de `/api/v1`, exceto `/auth/login`, exigem `Authorization: Bearer
+<token>`. As marcadas como **super admin** também exigem `User.IsSuperAdmin = true`; as
+de um tenant específico (`:id`) exigem vínculo do usuário com aquele tenant (ou super
+admin) — ver [`05_Auth_Backend_Contract.md`](./05_Auth_Backend_Contract.md) para o
+contrato completo de autenticação, papéis e isolamento entre tenants.
+
+| Método | Rota | Auth extra | Descrição |
+|--------|------|------------|-----------|
+| GET | `/health` | pública | Saúde de DB + broker |
+| POST | `/api/v1/auth/login` | pública | Login |
+| POST | `/api/v1/auth/register` | super admin | Cadastra usuário |
+| GET/DELETE | `/api/v1/users`, `/api/v1/users/:id` | super admin* | Gestão de usuários (*`GET /users/:id` também vale para o próprio usuário) |
+| GET | `/api/v1/users/:id/tenants` | próprio usuário ou super admin | Tenants do usuário |
+| POST | `/api/v1/audit/trigger` | vínculo com o `tenant_id` do corpo | Enfileira auditoria |
+| GET | `/api/v1/tenants` | filtrado por vínculo | Lista tenants (`?include_inactive=true`) |
+| POST | `/api/v1/tenants` | super admin | Cadastra tenant |
+| GET | `/api/v1/tenants/:id` | vínculo com o tenant | Busca tenant |
+| PUT | `/api/v1/tenants/:id` | super admin | Atualiza tenant |
+| PATCH | `/api/v1/tenants/:id/deactivate` | super admin | Desativa tenant |
+| POST/DELETE | `/api/v1/tenants/:id/users` | super admin | Vincula/desvincula usuário ao tenant |
+| GET | `/api/v1/tenants/:id/users` | vínculo com o tenant | Lista usuários do tenant |
+| GET | `/api/v1/tenants/:id/settings` | vínculo com o tenant | Busca configurações |
+| PUT | `/api/v1/tenants/:id/settings` | vínculo com o tenant | Atualiza configurações |
+| GET | `/api/v1/tenants/:id/staffs` | vínculo com o tenant | Lista responsáveis |
+| POST | `/api/v1/tenants/:id/staffs` | vínculo com o tenant | Cadastra responsável |
+| PUT | `/api/v1/staffs/:staffId` | vínculo com o tenant do staff | Atualiza responsável |
+| DELETE | `/api/v1/staffs/:staffId` | vínculo com o tenant do staff | Exclui responsável |
+| GET | `/api/v1/tenants/:id/reports` | vínculo com o tenant | Lista relatórios (painel) |
 
 ---
 
@@ -207,8 +219,14 @@ docker compose up -d
 # Saúde
 curl localhost:8080/health
 
-# Cadastrar um tenant
+# Login (super admin criado via seed — ver seção 05_Auth_Backend_Contract.md)
+TOKEN=$(curl -s -X POST localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@empresa.com","password":"minhasenha123"}' | jq -r .token)
+
+# Cadastrar um tenant (exige super admin)
 curl -X POST localhost:8080/api/v1/tenants \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"name":"Empresa Teste","secullum_database_id":123,"staff_name":"Fulano","staff_contact":"5531999999999"}'
 
@@ -228,5 +246,7 @@ cd backend && go test ./...
 - **Alertas preventivos intra-dia**: a fila `notifications.whatsapp` e o worker que a
   consome já existem e são usados no fechamento noturno; falta o gatilho intra-dia
   (seção 5.3) que dispara uma auditoria parcial sem gravar `Report`.
-- **Autenticação/middleware (JWT)** para proteger os endpoints administrativos.
 - **Criptografia** de credenciais sensíveis em repouso.
+
+> Autenticação (JWT), papel de super admin e isolamento de dados por tenant já estão
+> implementados — ver [`05_Auth_Backend_Contract.md`](./05_Auth_Backend_Contract.md).

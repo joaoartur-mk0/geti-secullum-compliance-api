@@ -15,11 +15,12 @@ type StaffRequest struct {
 }
 
 type StaffHandler struct {
-	staffRepo domain.StaffRepository
+	staffRepo      domain.StaffRepository
+	userTenantRepo domain.UserTenantRepository
 }
 
-func NewStaffHandler(repo domain.StaffRepository) *StaffHandler {
-	return &StaffHandler{staffRepo: repo}
+func NewStaffHandler(repo domain.StaffRepository, userTenantRepo domain.UserTenantRepository) *StaffHandler {
+	return &StaffHandler{staffRepo: repo, userTenantRepo: userTenantRepo}
 }
 
 type staffResponse struct {
@@ -93,6 +94,16 @@ func (h *StaffHandler) Update(c *gin.Context) {
 		return
 	}
 
+	existing, err := h.staffRepo.GetByID(id)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	if err := ensureTenantAccess(c, h.userTenantRepo, op, existing.TenantID); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
 	var req StaffRequest
 	if err := bindJSON(c, op, &req); err != nil {
 		httperr.Respond(c, err)
@@ -113,6 +124,16 @@ func (h *StaffHandler) Delete(c *gin.Context) {
 
 	id, err := idParam(c, op, "staffId")
 	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	existing, err := h.staffRepo.GetByID(id)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	if err := ensureTenantAccess(c, h.userTenantRepo, op, existing.TenantID); err != nil {
 		httperr.Respond(c, err)
 		return
 	}

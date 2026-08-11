@@ -11,8 +11,9 @@ import (
 
 // Chaves usadas para guardar a identidade do usuário autenticado no contexto do Gin.
 const (
-	ContextUserIDKey    = "auth_user_id"
-	ContextUserEmailKey = "auth_user_email"
+	ContextUserIDKey       = "auth_user_id"
+	ContextUserEmailKey    = "auth_user_email"
+	ContextIsSuperAdminKey = "auth_is_super_admin"
 )
 
 // RequireAuth exige um token JWT válido no header "Authorization: Bearer <token>".
@@ -38,6 +39,7 @@ func RequireAuth() gin.HandlerFunc {
 
 		c.Set(ContextUserIDKey, claims.UserID)
 		c.Set(ContextUserEmailKey, claims.Email)
+		c.Set(ContextIsSuperAdminKey, claims.IsSuperAdmin)
 		c.Next()
 	}
 }

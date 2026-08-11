@@ -7,6 +7,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"backend/internal/domain"
+	"backend/internal/interface/http/httperr"
 )
 
 type EventPublisher interface {
@@ -14,12 +17,14 @@ type EventPublisher interface {
 }
 
 type AuditHandler struct {
-	publisher EventPublisher
+	publisher      EventPublisher
+	userTenantRepo domain.UserTenantRepository
 }
 
-func NewAuditHandler(publisher EventPublisher) *AuditHandler {
+func NewAuditHandler(publisher EventPublisher, userTenantRepo domain.UserTenantRepository) *AuditHandler {
 	return &AuditHandler{
-		publisher: publisher,
+		publisher:      publisher,
+		userTenantRepo: userTenantRepo,
 	}
 }
 
@@ -28,6 +33,8 @@ type TriggerRequest struct {
 }
 
 func (h *AuditHandler) TriggerAudit(c *gin.Context) {
+	const op = "AuditHandler.TriggerAudit"
+
 	var req TriggerRequest
 
 	// 1. Valida o JSON de entrada
@@ -36,6 +43,13 @@ func (h *AuditHandler) TriggerAudit(c *gin.Context) {
 			"error":   "Payload inválido",
 			"details": "O campo tenant_id é obrigatório e deve ser um número inteiro.",
 		})
+		return
+	}
+
+	// 1b. O tenant_id vem no corpo (não na rota), então a checagem de acesso é feita
+	// aqui em vez de via middleware — mesma regra de isolamento das demais rotas.
+	if err := ensureTenantAccess(c, h.userTenantRepo, op, req.TenantID); err != nil {
+		httperr.Respond(c, err)
 		return
 	}
 
