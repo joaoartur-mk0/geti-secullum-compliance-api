@@ -45,7 +45,13 @@ type TenantRepository interface {
 	List(includeInactive bool) ([]*Tenant, error)
 	Save(tenant *Tenant) error
 	Update(tenant *Tenant) error
+	Activate(id int) error
 	Deactivate(id int) error
+	// Delete apaga o tenant e tudo que depende dele (settings, staffs, colaboradores,
+	// jornadas, relatórios, vínculos com usuários) — operação irreversível, perde o
+	// histórico de auditoria. Prefira Deactivate quando o objetivo é só suspender o
+	// acesso mantendo o histórico.
+	Delete(id int) error
 
 	GetSettings(tenantID int) (*TenantSettings, error)
 	UpdateSettings(tenantID int, settings *TenantSettings) error

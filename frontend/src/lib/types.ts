@@ -9,6 +9,10 @@ export interface Tenant {
   active: boolean
 }
 
+export interface AddUserToTenantRequest {
+  user_id: number
+}
+
 export interface CreateTenantRequest {
   name: string
   secullum_database_id: number
@@ -102,7 +106,7 @@ export interface HealthResponse {
 
 export interface ApiErrorBody {
   error?: {
-    code?: 'VALIDATION' | 'NOT_FOUND' | 'CONFLICT' | 'INTERNAL' | 'UNAUTHORIZED'
+    code?: 'VALIDATION' | 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN' | 'INTERNAL' | 'UNAUTHORIZED'
     message?: string
     details?: string | null
   }
@@ -113,6 +117,8 @@ export interface User {
   id: number
   name: string
   email: string
+  is_super_admin: boolean
+  active: boolean
 }
 
 export interface LoginRequest {
@@ -123,4 +129,11 @@ export interface LoginRequest {
 export interface LoginResponse {
   token: string
   user: User
+  tenant_ids: number[]
+}
+
+export interface RegisterUserRequest {
+  name: string
+  email: string
+  password: string
 }

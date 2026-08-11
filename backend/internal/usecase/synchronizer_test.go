@@ -20,7 +20,9 @@ func (f *fakeTenantRepo) GetActiveTenants() ([]*domain.Tenant, error)      { ret
 func (f *fakeTenantRepo) List(bool) ([]*domain.Tenant, error)              { return nil, nil }
 func (f *fakeTenantRepo) Save(*domain.Tenant) error                        { return nil }
 func (f *fakeTenantRepo) Update(*domain.Tenant) error                      { return nil }
+func (f *fakeTenantRepo) Activate(int) error                               { return nil }
 func (f *fakeTenantRepo) Deactivate(int) error                             { return nil }
+func (f *fakeTenantRepo) Delete(int) error                                 { return nil }
 func (f *fakeTenantRepo) GetSettings(int) (*domain.TenantSettings, error)  { return nil, nil }
 func (f *fakeTenantRepo) UpdateSettings(int, *domain.TenantSettings) error { return nil }
 

@@ -8,6 +8,7 @@ import Empresa from './pages/Empresa'
 import Gestores from './pages/Gestores'
 import Indicadores from './pages/Indicadores'
 import Login from './pages/Login'
+import Moderacao from './pages/Moderacao'
 import Painel from './pages/Painel'
 import WhatsApp from './pages/WhatsApp'
 
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="avisos" element={<Avisos />} />
             <Route path="whatsapp" element={<WhatsApp />} />
             <Route path="empresa" element={<Empresa />} />
+            <Route path="moderacao" element={<Moderacao />} />
           </Route>
         </Routes>
       </BrowserRouter>

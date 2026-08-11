@@ -46,6 +46,12 @@ export function getToken(): string | null {
   return getSession()?.token ?? null
 }
 
+// Só o super admin acessa o painel de moderação (/moderacao) — cadastro/exclusão de
+// usuários e empresas, ver docs/05_Auth_Backend_Contract.md no backend.
+export function isSuperAdmin(): boolean {
+  return getSession()?.user.is_super_admin ?? false
+}
+
 export function startSession(session: Session) {
   localStorage.setItem(SESSION_KEY, JSON.stringify(session))
 }

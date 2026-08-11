@@ -134,15 +134,72 @@ func (r *tenantRepository) Update(tenant *domain.Tenant) error {
 	return nil
 }
 
+func (r *tenantRepository) Activate(id int) error {
+	const op = "tenantRepository.Activate"
+	return r.setActive(op, id, true)
+}
+
 func (r *tenantRepository) Deactivate(id int) error {
 	const op = "tenantRepository.Deactivate"
+	return r.setActive(op, id, false)
+}
 
-	res := r.db.Model(&models.Tenant{}).Where("id = ?", id).Update("active", false)
+func (r *tenantRepository) setActive(op string, id int, active bool) error {
+	res := r.db.Model(&models.Tenant{}).Where("id = ?", id).Update("active", active)
 	if res.Error != nil {
-		return domain.NewInternal(op, "falha ao desativar tenant", res.Error)
+		return domain.NewInternal(op, "falha ao atualizar estado do tenant", res.Error)
 	}
 	if res.RowsAffected == 0 {
 		return domain.NewNotFound(op, "tenant não encontrado", nil)
+	}
+	return nil
+}
+
+// Delete apaga o tenant e tudo que depende dele numa transação: jornadas dos
+// colaboradores, colaboradores, relatórios, staffs, configurações e vínculos com
+// usuários. Operação irreversível — perde o histórico de auditoria do tenant.
+func (r *tenantRepository) Delete(id int) error {
+	const op = "tenantRepository.Delete"
+
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		// Os dependentes têm FK para tenants(id) — precisam sair antes do tenant.
+		if err := tx.Exec(
+			`DELETE FROM collaborator_schedules WHERE collaborator_id IN (SELECT id FROM collaborators WHERE tenant_id = ?)`,
+			id,
+		).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("tenant_id = ?", id).Delete(&models.Collaborator{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("tenant_id = ?", id).Delete(&models.Report{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("tenant_id = ?", id).Delete(&models.Staff{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("tenant_id = ?", id).Delete(&models.TenantSettings{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("tenant_id = ?", id).Delete(&models.UserTenant{}).Error; err != nil {
+			return err
+		}
+
+		res := tx.Where("id = ?", id).Delete(&models.Tenant{})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.NewNotFound(op, "tenant não encontrado", err)
+	}
+	if err != nil {
+		return domain.NewInternal(op, "falha ao apagar tenant", err)
 	}
 	return nil
 }

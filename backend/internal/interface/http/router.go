@@ -65,6 +65,8 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 		v1.GET("/users/:id/tenants", middleware.RequireSelfOrSuperAdmin("id"), userHandler.ListTenants)
 		v1.PUT("/users/:id/email", middleware.RequireSelfOrSuperAdmin("id"), userHandler.UpdateEmail)
 		v1.PUT("/users/:id/password", middleware.RequireSelfOrSuperAdmin("id"), userHandler.UpdatePassword)
+		v1.PATCH("/users/:id/activate", middleware.RequireSuperAdmin(), userHandler.Activate)
+		v1.PATCH("/users/:id/deactivate", middleware.RequireSuperAdmin(), userHandler.Deactivate)
 		v1.DELETE("/users/:id", middleware.RequireSuperAdmin(), userHandler.Delete)
 
 		// Auditoria (o tenant_id vem no corpo; o acesso é checado dentro do handler)
@@ -75,7 +77,9 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 		v1.GET("/tenants", tenantHandler.List)
 		v1.POST("/tenants", middleware.RequireSuperAdmin(), tenantHandler.Create)
 		v1.PUT("/tenants/:id", middleware.RequireSuperAdmin(), tenantHandler.Update)
+		v1.PATCH("/tenants/:id/activate", middleware.RequireSuperAdmin(), tenantHandler.Activate)
 		v1.PATCH("/tenants/:id/deactivate", middleware.RequireSuperAdmin(), tenantHandler.Deactivate)
+		v1.DELETE("/tenants/:id", middleware.RequireSuperAdmin(), tenantHandler.Delete)
 
 		// Gestão do vínculo usuário↔tenant (só super admin associa/desassocia).
 		v1.POST("/tenants/:id/users", middleware.RequireSuperAdmin(), tenantHandler.AddUser)

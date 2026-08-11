@@ -101,6 +101,7 @@ func (r *userRepository) Save(user *domain.User) error {
 	}
 
 	model := toModelUser(user)
+	model.Active = true // todo usuário novo nasce ativo, independente do que veio no domain.User
 
 	err = r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&model).Error; err != nil {
@@ -135,6 +136,31 @@ func (r *userRepository) Delete(id uint) error {
 		return domain.NewInternal(op, "failed to delete user", err)
 	}
 
+	return nil
+}
+
+func (r *userRepository) Activate(id uint) error {
+	const op = "userRepository.Activate"
+	return r.setActive(op, id, true)
+}
+
+func (r *userRepository) Deactivate(id uint) error {
+	const op = "userRepository.Deactivate"
+	return r.setActive(op, id, false)
+}
+
+func (r *userRepository) setActive(op string, id uint, active bool) error {
+	if id == 0 {
+		return domain.NewInternal(op, "id is required", nil)
+	}
+
+	res := r.db.Model(&models.User{}).Where("id = ?", id).Update("active", active)
+	if res.Error != nil {
+		return domain.NewInternal(op, "failed to update user active state", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return domain.NewNotFound(op, "user not found", nil)
+	}
 	return nil
 }
 
@@ -232,6 +258,7 @@ func toDomainUser(model *models.User) *domain.User {
 		Email:        model.Email,
 		Password:     model.Password,
 		IsSuperAdmin: model.IsSuperAdmin,
+		Active:       model.Active,
 	}
 	return domainUser
 }

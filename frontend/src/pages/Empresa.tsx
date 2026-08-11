@@ -4,7 +4,7 @@ import { Button, Field, Input, useToast } from '../components/ui'
 import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
 import { isValidPhone, normalizePhone } from '../lib/format'
-import { saveTenantId } from '../lib/session'
+import { isSuperAdmin, saveTenantId } from '../lib/session'
 import type { Tenant } from '../lib/types'
 
 export default function Empresa() {
@@ -31,6 +31,7 @@ export default function Empresa() {
 
 function CompanyDataForm({ tenant, onSaved }: { tenant: Tenant; onSaved: () => void }) {
   const toast = useToast()
+  const admin = isSuperAdmin()
   const [name, setName] = useState(tenant.name)
   const [databaseId, setDatabaseId] = useState(String(tenant.secullum_database_id))
   const [saving, setSaving] = useState(false)
@@ -59,7 +60,7 @@ function CompanyDataForm({ tenant, onSaved }: { tenant: Tenant; onSaved: () => v
     <form onSubmit={save} className="mt-8 max-w-lg rounded-card border border-line bg-bg p-5 shadow-card">
       <div className="flex flex-col gap-4">
         <Field label="Nome da empresa">
-          <Input required value={name} onChange={(e) => setName(e.target.value)} />
+          <Input required disabled={!admin} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field
           label="ID do banco no Secullum"
@@ -67,6 +68,7 @@ function CompanyDataForm({ tenant, onSaved }: { tenant: Tenant; onSaved: () => v
         >
           <Input
             required
+            disabled={!admin}
             inputMode="numeric"
             pattern="[0-9]+"
             value={databaseId}
@@ -74,20 +76,28 @@ function CompanyDataForm({ tenant, onSaved }: { tenant: Tenant; onSaved: () => v
           />
         </Field>
 
-        <div className="flex max-w-prose items-start gap-2.5 rounded-card bg-brand-soft px-4 py-3 text-sm leading-relaxed text-brand-strong">
-          <Info size={16} className="mt-0.5 shrink-0" aria-hidden />
-          <p>
-            Trocar o ID do banco muda a fonte das próximas auditorias. Os relatórios já gerados
-            continuam guardados com a empresa.
+        {admin ? (
+          <div className="flex max-w-prose items-start gap-2.5 rounded-card bg-brand-soft px-4 py-3 text-sm leading-relaxed text-brand-strong">
+            <Info size={16} className="mt-0.5 shrink-0" aria-hidden />
+            <p>
+              Trocar o ID do banco muda a fonte das próximas auditorias. Os relatórios já gerados
+              continuam guardados com a empresa.
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-ink-soft">
+            Só um super admin pode alterar esses dados — fale com quem administra o painel.
           </p>
-        </div>
+        )}
 
         {error && <p className="text-sm font-medium text-critico">{error}</p>}
 
-        <Button type="submit" busy={saving} disabled={!dirty} className="self-start">
-          <Database size={16} aria-hidden />
-          Salvar dados
-        </Button>
+        {admin && (
+          <Button type="submit" busy={saving} disabled={!dirty} className="self-start">
+            <Database size={16} aria-hidden />
+            Salvar dados
+          </Button>
+        )}
       </div>
     </form>
   )
@@ -147,24 +157,26 @@ function CompanyList({
         })}
       </ul>
 
-      <div className="mt-3">
-        {adding ? (
-          <AddCompanyForm
-            onCancel={() => setAdding(false)}
-            onCreated={(tenant) => {
-              toast('success', `${tenant.name} cadastrada e em consulta.`)
-              setAdding(false)
-              saveTenantId(tenant.id)
-              onCreated()
-            }}
-          />
-        ) : (
-          <Button variant="secondary" onClick={() => setAdding(true)}>
-            <Plus size={16} aria-hidden />
-            Adicionar empresa
-          </Button>
-        )}
-      </div>
+      {isSuperAdmin() && (
+        <div className="mt-3">
+          {adding ? (
+            <AddCompanyForm
+              onCancel={() => setAdding(false)}
+              onCreated={(tenant) => {
+                toast('success', `${tenant.name} cadastrada e em consulta.`)
+                setAdding(false)
+                saveTenantId(tenant.id)
+                onCreated()
+              }}
+            />
+          ) : (
+            <Button variant="secondary" onClick={() => setAdding(true)}>
+              <Plus size={16} aria-hidden />
+              Adicionar empresa
+            </Button>
+          )}
+        </div>
+      )}
     </section>
   )
 }

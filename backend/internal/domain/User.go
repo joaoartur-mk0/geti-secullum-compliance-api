@@ -6,6 +6,7 @@ type User struct {
 	Email        string `json:"email"`
 	Password     string `json:"password"`
 	IsSuperAdmin bool   `json:"is_super_admin"`
+	Active       bool   `json:"active"`
 }
 
 type UserRepository interface {
@@ -13,6 +14,8 @@ type UserRepository interface {
 	UpdateEmail(user *User) error
 	UpdatePassword(user *User) error
 	Delete(id uint) error
+	Activate(id uint) error
+	Deactivate(id uint) error
 	GetByID(id uint) (*User, error)
 	GetByEmail(email string) (*User, error)
 	List() ([]User, error)

@@ -43,10 +43,11 @@ type userResponse struct {
 	Name         string `json:"name"`
 	Email        string `json:"email"`
 	IsSuperAdmin bool   `json:"is_super_admin"`
+	Active       bool   `json:"active"`
 }
 
 func toUserResponse(u domain.User) userResponse {
-	return userResponse{ID: u.ID, Name: u.Name, Email: u.Email, IsSuperAdmin: u.IsSuperAdmin}
+	return userResponse{ID: u.ID, Name: u.Name, Email: u.Email, IsSuperAdmin: u.IsSuperAdmin, Active: u.Active}
 }
 
 // userIDParam extrai o :id da rota como uint (o domínio de User usa gorm.Model,
@@ -108,6 +109,11 @@ func (h *UserHandler) Login(c *gin.Context) {
 
 	if err := auth.CheckPassword(user.Password, req.Password); err != nil {
 		httperr.Respond(c, domain.NewValidation(op, "credenciais inválidas", nil))
+		return
+	}
+
+	if !user.Active {
+		httperr.Respond(c, domain.NewValidation(op, "usuário desativado", nil))
 		return
 	}
 
@@ -248,6 +254,43 @@ func (h *UserHandler) UpdatePassword(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "senha atualizada com sucesso"})
+}
+
+// Activate — PATCH /api/v1/users/:id/activate
+func (h *UserHandler) Activate(c *gin.Context) {
+	const op = "UserHandler.Activate"
+
+	id, err := userIDParam(c, op)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	if err := h.userRepo.Activate(id); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "usuário ativado com sucesso"})
+}
+
+// Deactivate — PATCH /api/v1/users/:id/deactivate
+// Impede novos logins a partir de agora; o token já emitido (se houver) continua
+// válido até expirar (máx. 24h) — mesma limitação documentada da ausência de refresh
+// token, ver docs/05_Auth_Backend_Contract.md.
+func (h *UserHandler) Deactivate(c *gin.Context) {
+	const op = "UserHandler.Deactivate"
+
+	id, err := userIDParam(c, op)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	if err := h.userRepo.Deactivate(id); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "usuário desativado com sucesso"})
 }
 
 // Delete — DELETE /api/v1/users/:id

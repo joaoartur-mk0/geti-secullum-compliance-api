@@ -1,15 +1,18 @@
 import type {
+  AddUserToTenantRequest,
   ApiErrorBody,
   Collaborator,
   CreateTenantRequest,
   HealthResponse,
   LoginRequest,
   LoginResponse,
+  RegisterUserRequest,
   Report,
   Settings,
   Staff,
   StaffRequest,
   Tenant,
+  User,
   WhatsAppConnectResponse,
   WhatsAppStatus,
 } from './types'
@@ -106,6 +109,47 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
+
+  activateTenant: (id: number) =>
+    request<{ message: string }>(`/api/v1/tenants/${id}/activate`, { method: 'PATCH' }),
+
+  deactivateTenant: (id: number) =>
+    request<{ message: string }>(`/api/v1/tenants/${id}/deactivate`, { method: 'PATCH' }),
+
+  deleteTenant: (id: number) =>
+    request<{ message: string }>(`/api/v1/tenants/${id}`, { method: 'DELETE' }),
+
+  // ---------- Moderação: usuários (só super admin) ----------
+
+  listUsers: () => request<{ users: User[] | null }>('/api/v1/users').then((r) => r.users ?? []),
+
+  registerUser: (body: RegisterUserRequest) =>
+    request<{ message: string; user: User }>('/api/v1/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  activateUser: (id: number) =>
+    request<{ message: string }>(`/api/v1/users/${id}/activate`, { method: 'PATCH' }),
+
+  deactivateUser: (id: number) =>
+    request<{ message: string }>(`/api/v1/users/${id}/deactivate`, { method: 'PATCH' }),
+
+  deleteUser: (id: number) => request<{ message: string }>(`/api/v1/users/${id}`, { method: 'DELETE' }),
+
+  // ---------- Moderação: vínculo usuário↔tenant (só super admin gerencia) ----------
+
+  listTenantUsers: (tenantId: number) =>
+    request<{ users: User[] | null }>(`/api/v1/tenants/${tenantId}/users`).then((r) => r.users ?? []),
+
+  addUserToTenant: (tenantId: number, body: AddUserToTenantRequest) =>
+    request<{ message: string }>(`/api/v1/tenants/${tenantId}/users`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  removeUserFromTenant: (tenantId: number, userId: number) =>
+    request<{ message: string }>(`/api/v1/tenants/${tenantId}/users/${userId}`, { method: 'DELETE' }),
 
   getSettings: (tenantId: number) =>
     request<{ settings: Settings }>(`/api/v1/tenants/${tenantId}/settings`).then((r) => r.settings),

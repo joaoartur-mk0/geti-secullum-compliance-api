@@ -292,6 +292,23 @@ func (h *TenantHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "tenant atualizado com sucesso"})
 }
 
+// Activate — PATCH /api/v1/tenants/:id/activate
+func (h *TenantHandler) Activate(c *gin.Context) {
+	const op = "TenantHandler.Activate"
+
+	id, err := idParam(c, op, "id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	if err := h.tenantRepo.Activate(id); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "tenant ativado com sucesso"})
+}
+
 // Deactivate — PATCH /api/v1/tenants/:id/deactivate
 func (h *TenantHandler) Deactivate(c *gin.Context) {
 	const op = "TenantHandler.Deactivate"
@@ -307,4 +324,24 @@ func (h *TenantHandler) Deactivate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "tenant desativado com sucesso"})
+}
+
+// Delete — DELETE /api/v1/tenants/:id
+// Apaga o tenant em cascata (settings, staffs, colaboradores, jornadas, relatórios,
+// vínculos com usuários) — irreversível, perde o histórico de auditoria. Prefira
+// Deactivate quando o objetivo é só suspender o acesso.
+func (h *TenantHandler) Delete(c *gin.Context) {
+	const op = "TenantHandler.Delete"
+
+	id, err := idParam(c, op, "id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	if err := h.tenantRepo.Delete(id); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "tenant apagado com sucesso"})
 }

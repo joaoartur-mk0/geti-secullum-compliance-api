@@ -6,14 +6,15 @@ import {
   LayoutDashboard,
   LogOut,
   MessageCircle,
+  ShieldAlert,
   ShieldCheck,
   Users,
 } from 'lucide-react'
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { NavLink, Navigate, Outlet, useNavigate } from 'react-router-dom'
-import { Button, ErrorNote, Field, Input, Skeleton } from '../components/ui'
+import { Button, EmptyState, ErrorNote, Field, Input, Skeleton } from '../components/ui'
 import { api, ApiError } from '../lib/api'
-import { endSession, getSavedTenantId, getSession, saveTenantId } from '../lib/session'
+import { endSession, getSavedTenantId, getSession, isSuperAdmin, saveTenantId } from '../lib/session'
 import { isValidPhone, normalizePhone } from '../lib/format'
 import type { Tenant } from '../lib/types'
 
@@ -37,13 +38,14 @@ export function useTenant(): TenantContextValue {
 // ---------- Shell ----------
 
 const navItems = [
-  { to: '/', label: 'Painel', icon: LayoutDashboard, end: true },
-  { to: '/indicadores', label: 'Indicadores', icon: BarChart3, end: false },
-  { to: '/colaboradores', label: 'Colaboradores', icon: Contact, end: false },
-  { to: '/gestores', label: 'Gestores', icon: Users, end: false },
-  { to: '/avisos', label: 'Avisos', icon: Bell, end: false },
-  { to: '/whatsapp', label: 'WhatsApp', icon: MessageCircle, end: false },
-  { to: '/empresa', label: 'Empresa', icon: Building2, end: false },
+  { to: '/', label: 'Painel', icon: LayoutDashboard, end: true, superAdminOnly: false },
+  { to: '/indicadores', label: 'Indicadores', icon: BarChart3, end: false, superAdminOnly: false },
+  { to: '/colaboradores', label: 'Colaboradores', icon: Contact, end: false, superAdminOnly: false },
+  { to: '/gestores', label: 'Gestores', icon: Users, end: false, superAdminOnly: false },
+  { to: '/avisos', label: 'Avisos', icon: Bell, end: false, superAdminOnly: false },
+  { to: '/whatsapp', label: 'WhatsApp', icon: MessageCircle, end: false, superAdminOnly: false },
+  { to: '/empresa', label: 'Empresa', icon: Building2, end: false, superAdminOnly: false },
+  { to: '/moderacao', label: 'Moderação', icon: ShieldAlert, end: false, superAdminOnly: true },
 ]
 
 type TenantState =
@@ -55,6 +57,8 @@ type TenantState =
 export default function AppShell() {
   const session = getSession()
   const navigate = useNavigate()
+  const admin = isSuperAdmin()
+  const items = navItems.filter((item) => !item.superAdminOnly || admin)
   const [state, setState] = useState<TenantState>({ phase: 'loading' })
 
   const loadTenant = useCallback(async () => {
@@ -113,7 +117,7 @@ export default function AppShell() {
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 px-3" aria-label="Principal">
-          {navItems.map(({ to, label, icon: Icon, end }) => (
+          {items.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}
@@ -200,7 +204,14 @@ export default function AppShell() {
             </div>
           )}
           {state.phase === 'error' && <ErrorNote message={state.message} onRetry={loadTenant} />}
-          {state.phase === 'empty' && <CreateTenantCard onCreated={loadTenant} />}
+          {state.phase === 'empty' && admin && <CreateTenantCard onCreated={loadTenant} />}
+          {state.phase === 'empty' && !admin && (
+            <EmptyState
+              icon={<Building2 size={32} strokeWidth={1.5} />}
+              title="Nenhuma empresa vinculada à sua conta"
+              description="Fale com quem administra o painel para vincular seu usuário a uma empresa."
+            />
+          )}
           {state.phase === 'ready' && (
             <TenantContext.Provider
               value={{
@@ -221,7 +232,7 @@ export default function AppShell() {
         className="fixed inset-x-0 bottom-0 z-30 flex border-t border-side-raise bg-side text-side-faint md:hidden"
         aria-label="Principal"
       >
-        {navItems.map(({ to, label, icon: Icon, end }) => (
+        {items.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
             to={to}
