@@ -1,4 +1,4 @@
-import { Clock, Plus, X } from 'lucide-react'
+import { Clock } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button, ErrorNote, Select, Skeleton, Toggle, useToast } from '../components/ui'
@@ -51,14 +51,12 @@ export default function Avisos() {
   const [state, setState] = useState<LoadState>({ phase: 'loading' })
   const [saved, setSaved] = useState<Settings | null>(null)
   const [draft, setDraft] = useState<Settings | null>(null)
-  const [newTime, setNewTime] = useState('')
   const [saving, setSaving] = useState(false)
 
   const load = useCallback(async () => {
     setState({ phase: 'loading' })
     try {
       const settings = await api.getSettings(tenant.id)
-      settings.horarios = [...(settings.horarios ?? [])].sort()
       setSaved(settings)
       setDraft(settings)
       setState({ phase: 'ready' })
@@ -80,20 +78,10 @@ export default function Avisos() {
     setDraft((current) => (current ? { ...current, ...partial } : current))
   }
 
-  function addTime() {
-    if (!draft || !/^\d{2}:\d{2}$/.test(newTime)) return
-    if (draft.horarios.includes(newTime)) {
-      setNewTime('')
-      return
-    }
-    patch({ horarios: [...draft.horarios, newTime].sort() })
-    setNewTime('')
-  }
-
   async function save() {
     if (!draft) return
-    if (draft.horarios.length === 0) {
-      toast('error', 'Mantenha ao menos um horário de varredura — sem ele, nada é auditado.')
+    if (!draft.horario) {
+      toast('error', 'Defina o horário da auditoria automática — sem ele, nada roda sozinho.')
       return
     }
     setSaving(true)
@@ -179,43 +167,21 @@ export default function Avisos() {
             })}
           </ul>
 
-          <section className="mt-8" aria-label="Horários de varredura">
-            <h2 className="text-sm font-semibold text-ink-soft">Horários de varredura</h2>
+          <section className="mt-8" aria-label="Horário da auditoria automática">
+            <h2 className="text-sm font-semibold text-ink-soft">Horário da auditoria automática</h2>
             <p className="mt-1 max-w-prose text-sm text-ink-soft">
-              Nesses horários o sistema varre as batidas do dia e dispara os avisos preventivos. O
-              fechamento oficial roda de madrugada.
+              Nesse horário, uma vez por dia, o sistema audita sozinho o fechamento do dia anterior e
+              envia o resumo para o WhatsApp dos gestores — sem precisar clicar em nada no Painel.
             </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {draft.horarios.map((time) => (
-                <span
-                  key={time}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel py-1.5 pl-3 pr-1.5 text-sm font-medium tabular-nums"
-                >
-                  <Clock size={14} className="text-ink-faint" aria-hidden />
-                  {time}
-                  <button
-                    type="button"
-                    aria-label={`Remover horário ${time}`}
-                    onClick={() => patch({ horarios: draft.horarios.filter((t) => t !== time) })}
-                    className="rounded-full p-1 text-ink-faint transition-colors duration-150 hover:bg-critico-bg hover:text-critico"
-                  >
-                    <X size={14} />
-                  </button>
-                </span>
-              ))}
-              <span className="inline-flex items-center gap-1">
-                <input
-                  type="time"
-                  value={newTime}
-                  onChange={(e) => setNewTime(e.target.value)}
-                  aria-label="Novo horário de varredura"
-                  className="min-h-10 rounded-field border border-line bg-bg px-2 text-sm tabular-nums transition-colors duration-150 hover:border-ink-faint focus:border-brand"
-                />
-                <Button type="button" variant="secondary" onClick={addTime} disabled={!newTime} className="min-h-10 px-3">
-                  <Plus size={16} aria-hidden />
-                  Adicionar
-                </Button>
-              </span>
+            <div className="mt-3 flex items-center gap-2">
+              <Clock size={16} className="text-ink-faint" aria-hidden />
+              <input
+                type="time"
+                value={draft.horario}
+                onChange={(e) => patch({ horario: e.target.value })}
+                aria-label="Horário da auditoria automática"
+                className="min-h-10 rounded-field border border-line bg-bg px-2 text-sm tabular-nums transition-colors duration-150 hover:border-ink-faint focus:border-brand"
+              />
             </div>
           </section>
 

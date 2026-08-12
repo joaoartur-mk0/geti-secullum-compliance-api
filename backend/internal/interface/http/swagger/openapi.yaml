@@ -1046,9 +1046,12 @@ components:
         almoco_severity: { type: string, enum: [ALERTA, CRITICO] }
         interjornada_severity: { type: string, enum: [ALERTA, CRITICO] }
         esquecimento_severity: { type: string, enum: [ALERTA, CRITICO] }
-        horarios:
-          type: array
-          items: { type: string, example: "18:30" }
+        horario:
+          type: string
+          example: "01:00"
+          description: >
+            Horário (HH:MM) em que o sistema dispara sozinho o fechamento automático de
+            D-1, no máximo uma vez por dia. Vazio = sem agendamento (só auditoria manual).
 
     AuditInconsistency:
       type: object

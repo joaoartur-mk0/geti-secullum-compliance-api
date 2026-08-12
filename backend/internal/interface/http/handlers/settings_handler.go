@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -9,8 +10,8 @@ import (
 	"backend/internal/interface/http/httperr"
 )
 
-// UpdateSettingsRequest carrega as flags de regras, as severidades configuráveis e
-// os horários de varredura. As severidades aceitam "ALERTA" ou "CRITICO".
+// UpdateSettingsRequest carrega as flags de regras, as severidades configuráveis e o
+// horário da auditoria automática diária. As severidades aceitam "ALERTA" ou "CRITICO".
 type UpdateSettingsRequest struct {
 	Almoco       bool `json:"almoco"`
 	Interjornada bool `json:"interjornada"`
@@ -21,7 +22,9 @@ type UpdateSettingsRequest struct {
 	InterjornadaSeverity string `json:"interjornada_severity"`
 	EsquecimentoSeverity string `json:"esquecimento_severity"`
 
-	Horarios []string `json:"horarios"`
+	// Horario ("HH:MM") é o momento em que o agendador dispara sozinho o fechamento
+	// automático de D-1 (ver usecase/scheduler.go). Vazio = sem agendamento.
+	Horario string `json:"horario"`
 }
 
 type SettingsHandler struct {
@@ -33,21 +36,17 @@ func NewSettingsHandler(repo domain.TenantRepository) *SettingsHandler {
 }
 
 type settingsResponse struct {
-	Almoco               bool     `json:"almoco"`
-	Interjornada         bool     `json:"interjornada"`
-	Hextras              bool     `json:"hextras"`
-	Esquecimento         bool     `json:"esquecimento"`
-	AlmocoSeverity       string   `json:"almoco_severity"`
-	InterjornadaSeverity string   `json:"interjornada_severity"`
-	EsquecimentoSeverity string   `json:"esquecimento_severity"`
-	Horarios             []string `json:"horarios"`
+	Almoco               bool   `json:"almoco"`
+	Interjornada         bool   `json:"interjornada"`
+	Hextras              bool   `json:"hextras"`
+	Esquecimento         bool   `json:"esquecimento"`
+	AlmocoSeverity       string `json:"almoco_severity"`
+	InterjornadaSeverity string `json:"interjornada_severity"`
+	EsquecimentoSeverity string `json:"esquecimento_severity"`
+	Horario              string `json:"horario"`
 }
 
 func toSettingsResponse(s *domain.TenantSettings) settingsResponse {
-	horarios := s.Horarios
-	if horarios == nil {
-		horarios = []string{}
-	}
 	return settingsResponse{
 		Almoco:               s.Almoco,
 		Interjornada:         s.Interjornada,
@@ -56,7 +55,7 @@ func toSettingsResponse(s *domain.TenantSettings) settingsResponse {
 		AlmocoSeverity:       string(s.AlmocoSeverity),
 		InterjornadaSeverity: string(s.InterjornadaSeverity),
 		EsquecimentoSeverity: string(s.EsquecimentoSeverity),
-		Horarios:             horarios,
+		Horario:              s.Horario,
 	}
 }
 
@@ -68,6 +67,15 @@ func validSeverity(s string) bool {
 	default:
 		return false
 	}
+}
+
+// validHorario aceita vazio (sem agendamento) ou "HH:MM".
+func validHorario(s string) bool {
+	if s == "" {
+		return true
+	}
+	_, err := time.Parse("15:04", s)
+	return err == nil
 }
 
 // Get — GET /api/v1/tenants/:id/settings
@@ -116,6 +124,11 @@ func (h *SettingsHandler) Update(c *gin.Context) {
 			return
 		}
 	}
+	if !validHorario(req.Horario) {
+		httperr.Respond(c, domain.NewValidation(op, "horário inválido", nil).
+			WithDetails("horario deve estar vazio ou no formato HH:MM"))
+		return
+	}
 
 	settings := &domain.TenantSettings{
 		Almoco:               req.Almoco,
@@ -125,7 +138,7 @@ func (h *SettingsHandler) Update(c *gin.Context) {
 		AlmocoSeverity:       domain.Severity(req.AlmocoSeverity),
 		InterjornadaSeverity: domain.Severity(req.InterjornadaSeverity),
 		EsquecimentoSeverity: domain.Severity(req.EsquecimentoSeverity),
-		Horarios:             req.Horarios,
+		Horario:              req.Horario,
 	}
 	if err := h.tenantRepo.UpdateSettings(tenantID, settings); err != nil {
 		httperr.Respond(c, err)

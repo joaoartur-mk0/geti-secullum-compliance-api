@@ -241,11 +241,17 @@ cd backend && go test ./...
 
 ## 11. O que ainda falta (roadmap)
 
-- **Agendador (cron)** para as varreduras intra-dia e o fechamento noturno (hoje a
-  auditoria só é disparada manualmente via `POST /api/v1/audit/trigger`).
-- **Alertas preventivos intra-dia**: a fila `notifications.whatsapp` e o worker que a
-  consome já existem e são usados no fechamento noturno; falta o gatilho intra-dia
-  (seção 5.3) que dispara uma auditoria parcial sem gravar `Report`.
+- **Agendador do fechamento noturno**: já implementado —
+  `usecase.SchedulerService` (`internal/usecase/scheduler.go`) dispara, sozinho e no
+  máximo uma vez por dia, o fechamento de D-1 de cada tenant no horário configurado em
+  `TenantSettings.Horario` (aba Avisos). Publica na mesma fila `audit.trigger` que
+  `POST /api/v1/audit/trigger` (disparo manual) — nenhuma lógica de auditoria nova, só o
+  gatilho automático que faltava.
+- **Alertas preventivos intra-dia**: ainda não existe. A fila `notifications.whatsapp` e
+  o worker que a consome já existem e são usados no fechamento noturno; falta o gatilho
+  intra-dia (seção 5.3) que dispara uma auditoria PARCIAL do dia em andamento (sem gravar
+  `Report`) em horários configuráveis — diferente do fechamento, que audita D-1 já
+  encerrado.
 - **Criptografia** de credenciais sensíveis em repouso.
 
 > Autenticação (JWT), papel de super admin e isolamento de dados por tenant já estão

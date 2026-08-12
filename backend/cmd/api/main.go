@@ -197,6 +197,13 @@ func main() {
 		}
 	}()
 
+	// Agendador: dispara sozinho a auditoria automática diária de cada tenant no
+	// horário configurado na aba Avisos (TenantSettings.Horario). Publica na mesma fila
+	// audit.trigger que o botão "Auditar agora" do painel — não é um motor de auditoria
+	// novo, só o gatilho que faltava (ver usecase/scheduler.go).
+	scheduler := usecase.NewSchedulerService(tenantRepo, publisherPool)
+	go scheduler.Start(context.Background())
+
 	// =====================================================================
 	// 5. INICIALIZAÇÃO DO SERVIDOR HTTP (GIN GONIC)
 	// =====================================================================

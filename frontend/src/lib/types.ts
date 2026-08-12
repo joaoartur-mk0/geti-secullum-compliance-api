@@ -41,7 +41,9 @@ export interface Settings {
   almoco_severity: Severity
   interjornada_severity: Severity
   esquecimento_severity: Severity
-  horarios: string[]
+  // Horário (HH:MM) em que o agendador dispara sozinho o fechamento automático de D-1,
+  // no máximo uma vez por dia. Vazio = sem agendamento (só auditoria manual).
+  horario: string
 }
 
 // Campos capitalizados: o backend serializa as structs Go sem json tags neste objeto

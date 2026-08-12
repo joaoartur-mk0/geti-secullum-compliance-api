@@ -71,9 +71,9 @@ func (r *tenantRepository) Save(tenant *domain.Tenant) error {
 		settings = &domain.TenantSettings{}
 	}
 
-	horariosJSON, err := marshalHorarios(settings.Horarios)
+	horariosJSON, err := marshalHorario(settings.Horario)
 	if err != nil {
-		return domain.NewInternal(op, "falha ao serializar horários", err)
+		return domain.NewInternal(op, "falha ao serializar horário", err)
 	}
 
 	tenantModel := &models.Tenant{
@@ -222,9 +222,9 @@ func (r *tenantRepository) GetSettings(tenantID int) (*domain.TenantSettings, er
 func (r *tenantRepository) UpdateSettings(tenantID int, settings *domain.TenantSettings) error {
 	const op = "tenantRepository.UpdateSettings"
 
-	horariosJSON, err := marshalHorarios(settings.Horarios)
+	horariosJSON, err := marshalHorario(settings.Horario)
 	if err != nil {
-		return domain.NewInternal(op, "falha ao serializar horários", err)
+		return domain.NewInternal(op, "falha ao serializar horário", err)
 	}
 
 	res := r.db.Model(&models.TenantSettings{}).Where("tenant_id = ?", tenantID).Updates(map[string]interface{}{
@@ -256,9 +256,13 @@ func mapTenants(modelsList []models.Tenant) []*domain.Tenant {
 	return tenants
 }
 
-func marshalHorarios(horarios []string) (datatypes.JSON, error) {
-	if horarios == nil {
-		horarios = []string{}
+// marshalHorario serializa o horário único do domínio na coluna jsonb `horarios` do
+// model (mantida como array por compatibilidade de schema — ver toDomainSettings). Vazio
+// vira array vazio; um horário configurado vira array de um elemento.
+func marshalHorario(horario string) (datatypes.JSON, error) {
+	horarios := []string{}
+	if horario != "" {
+		horarios = []string{horario}
 	}
 	raw, err := json.Marshal(horarios)
 	if err != nil {
@@ -267,10 +271,18 @@ func marshalHorarios(horarios []string) (datatypes.JSON, error) {
 	return datatypes.JSON(raw), nil
 }
 
+// toDomainSettings lê a coluna jsonb `horarios` e expõe só o primeiro elemento como
+// domain.TenantSettings.Horario — a aba Avisos permite configurar um único horário de
+// auditoria automática; a coluna array é herdada do schema antigo (múltiplos horários),
+// que não chegou a ser lida por nada no backend.
 func toDomainSettings(m *models.TenantSettings) *domain.TenantSettings {
 	var horarios []string
 	if len(m.Horarios) > 0 {
 		_ = json.Unmarshal(m.Horarios, &horarios)
+	}
+	horario := ""
+	if len(horarios) > 0 {
+		horario = horarios[0]
 	}
 	return &domain.TenantSettings{
 		Almoco:               m.Almoco,
@@ -280,7 +292,7 @@ func toDomainSettings(m *models.TenantSettings) *domain.TenantSettings {
 		AlmocoSeverity:       domain.Severity(m.AlmocoSeverity),
 		InterjornadaSeverity: domain.Severity(m.InterjornadaSeverity),
 		EsquecimentoSeverity: domain.Severity(m.EsquecimentoSeverity),
-		Horarios:             horarios,
+		Horario:              horario,
 	}
 }
 

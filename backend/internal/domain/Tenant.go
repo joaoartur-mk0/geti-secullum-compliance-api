@@ -13,7 +13,7 @@ type Tenant struct {
 }
 
 // TenantSettings contém as flags (regras habilitadas), as severidades configuráveis
-// por regra e os horários de varredura.
+// por regra e o horário da auditoria automática diária.
 type TenantSettings struct {
 	Almoco       bool
 	Interjornada bool
@@ -26,7 +26,11 @@ type TenantSettings struct {
 	InterjornadaSeverity Severity
 	EsquecimentoSeverity Severity
 
-	Horarios []string // Ex: ["12:00", "14:00", "18:30"]
+	// Horario ("HH:MM") é o momento em que o SchedulerService dispara, sozinho, o
+	// fechamento automático de D-1 para este tenant — no máximo uma vez por dia (ver
+	// usecase/scheduler.go). Vazio significa "sem agendamento": o tenant só é auditado
+	// manualmente (Painel).
+	Horario string
 }
 
 // Staff representa o gestor que receberá o alerta
