@@ -9,8 +9,8 @@ export default function Login() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
   if (getSession()) return <Navigate to="/" replace />
 
@@ -23,8 +23,8 @@ export default function Login() {
     setBusy(true)
     setError(null)
     try {
-      const { token, user } = await api.login({ email: email.trim(), password })
-      startSession({ token, user })
+      const session = await api.login({ email: email.trim(), password })
+      startSession(session)
       navigate('/', { replace: true })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Erro inesperado ao entrar.')
@@ -66,9 +66,7 @@ export default function Login() {
         <form onSubmit={submit} className="flex w-full max-w-sm animate-rise flex-col gap-4">
           <div className="mb-2">
             <h2 className="text-xl font-semibold tracking-tight">Entrar no painel</h2>
-            <p className="mt-1 text-sm text-ink-soft">
-              Acesso restrito à equipe interna. Sem conta? Fale com quem administra o painel.
-            </p>
+            <p className="mt-1 text-sm text-ink-soft">Use as credenciais cadastradas pelo administrador.</p>
           </div>
 
           <Field label="E-mail">

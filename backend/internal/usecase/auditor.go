@@ -98,6 +98,14 @@ func (s *AuditorService) ProcessRules(
 	// 0. Qualificação do dia. Só faz sentido cobrar carga de quem efetivamente
 	// trabalhou; e sem carga apurada as regras que dependem dela (hora extra e
 	// intervalo) ficam suspensas — o problema é reportado, nunca estimado.
+	//
+	// Os dois desvios apontados aqui (trabalho em dia de folga e dia sem carga prevista)
+	// nascem com severidade OPERACIONAL, não CRÍTICA: na escala mensal variável desta
+	// operação, o caso comum é o gestor trocar colaboradores de dia sem atualizar a
+	// Secullum. Isso é cadastro desatualizado, não infração da CLT — e, corrigida a
+	// escala, a ocorrência deixa de ser apurada e se resolve sozinha na varredura
+	// seguinte (ver usecase/reconciler.go). Uma folga que seja realmente folga continua
+	// visível ao gestor, apenas sem o alarme de infração.
 	worked, temTrabalho, errTrabalho := todayPunch.WorkedMinutes()
 	if errTrabalho != nil {
 		ruleErrors = append(ruleErrors, fmt.Errorf("regra %q: %w", "jornada trabalhada", errTrabalho))
@@ -115,9 +123,9 @@ func (s *AuditorService) ProcessRules(
 		infractions = append(infractions, domain.AuditInconsistency{
 			CollaboratorID: collab.ID,
 			Type:           TipoTrabalhoEmFolga,
-			Severity:       domain.SeverityCritical,
+			Severity:       domain.SeverityOperational,
 			Description: fmt.Sprintf(
-				"O colaborador trabalhou %s em um dia registrado como folga/DSR na Secullum. Todo o período é extraordinário.",
+				"O colaborador trabalhou %s em um dia registrado como folga/DSR na Secullum. Confirme se houve troca de escala não registrada; se a folga estiver correta, todo o período é extraordinário.",
 				formatMinutes(worked),
 			),
 		})
@@ -125,7 +133,7 @@ func (s *AuditorService) ProcessRules(
 		infractions = append(infractions, domain.AuditInconsistency{
 			CollaboratorID: collab.ID,
 			Type:           TipoCargaNaoApurada,
-			Severity:       domain.SeverityCritical,
+			Severity:       domain.SeverityOperational,
 			Description: fmt.Sprintf(
 				"O colaborador registrou %s de trabalho, mas a Secullum não informou jornada prevista para o dia. Sem a carga contratual não é possível apurar hora extra nem intervalo — verifique o horário cadastrado para este colaborador.",
 				formatMinutes(worked),

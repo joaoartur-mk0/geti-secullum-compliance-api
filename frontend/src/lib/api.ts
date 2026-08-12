@@ -1,11 +1,22 @@
 import type {
   AddUserToTenantRequest,
   ApiErrorBody,
+  Branch,
+  BranchDevice,
+  BranchDeviceRequest,
+  BranchPayrollNumber,
+  BranchPayrollNumberRequest,
+  BranchRequest,
   Collaborator,
+  CollaboratorPrefill,
   CreateTenantRequest,
+  CreateWarningRequest,
   HealthResponse,
   LoginRequest,
   LoginResponse,
+  Occurrence,
+  OccurrenceEvent,
+  OccurrenceState,
   RegisterUserRequest,
   Report,
   Settings,
@@ -13,6 +24,9 @@ import type {
   StaffRequest,
   Tenant,
   User,
+  Warning,
+  WarningCounts,
+  WarningStatus,
   WhatsAppConnectResponse,
   WhatsAppStatus,
 } from './types'
@@ -85,10 +99,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  triggerAudit: (tenantId: number) =>
-    request<{ message: string; tenant_id: number; status: string }>('/api/v1/audit/trigger', {
+  // `date` é opcional: sem ele, audita o fechamento de D-1 (a varredura automática de
+  // sempre). Com ele, confere um dia específico já encerrado sob demanda.
+  triggerAudit: (tenantId: number, date?: string) =>
+    request<{ message: string; tenant_id: number; date: string; status: string }>('/api/v1/audit/trigger', {
       method: 'POST',
-      body: JSON.stringify({ tenant_id: tenantId }),
+      body: JSON.stringify({ tenant_id: tenantId, ...(date ? { date } : {}) }),
     }),
 
   listTenants: (includeInactive = false) =>
@@ -200,4 +216,135 @@ export const api = {
     request<{ success: boolean }>(`/api/v1/tenants/${tenantId}/whatsapp/instance`, {
       method: 'DELETE',
     }),
+
+  // ---------- Ocorrências (máquina de estados) ----------
+
+  listOccurrences: (
+    tenantId: number,
+    filters?: {
+      date?: string
+      start_date?: string
+      end_date?: string
+      state?: OccurrenceState[]
+      collaborator_id?: number
+      branch_id?: number
+    },
+  ) => {
+    const params = new URLSearchParams()
+    if (filters?.date) params.set('date', filters.date)
+    if (filters?.start_date) params.set('start_date', filters.start_date)
+    if (filters?.end_date) params.set('end_date', filters.end_date)
+    if (filters?.state?.length) params.set('state', filters.state.join(','))
+    if (filters?.collaborator_id != null) params.set('collaborator_id', String(filters.collaborator_id))
+    if (filters?.branch_id != null) params.set('branch_id', String(filters.branch_id))
+    const qs = params.toString()
+    return request<{ occurrences: Occurrence[] | null; total: number }>(
+      `/api/v1/tenants/${tenantId}/occurrences${qs ? `?${qs}` : ''}`,
+    ).then((r) => ({ occurrences: r.occurrences ?? [], total: r.total ?? 0 }))
+  },
+
+  ignoreOccurrence: (occurrenceId: number, reason?: string) =>
+    request<{ message: string; state: string }>(`/api/v1/occurrences/${occurrenceId}/ignore`, {
+      method: 'PATCH',
+      body: JSON.stringify(reason ? { reason } : {}),
+    }),
+
+  listOccurrenceEvents: (occurrenceId: number) =>
+    request<{ events: OccurrenceEvent[] | null }>(`/api/v1/occurrences/${occurrenceId}/events`).then(
+      (r) => r.events ?? [],
+    ),
+
+  // ---------- Autopreenchimento ----------
+
+  getCollaboratorPrefill: (tenantId: number, secullumId: number, date?: string) =>
+    request<CollaboratorPrefill>(
+      `/api/v1/tenants/${tenantId}/collaborators/${secullumId}/prefill${date ? `?date=${date}` : ''}`,
+    ),
+
+  // ---------- Filiais ----------
+
+  listBranches: (tenantId: number) =>
+    request<{ branches: Branch[] | null }>(`/api/v1/tenants/${tenantId}/branches`).then(
+      (r) => r.branches ?? [],
+    ),
+
+  createBranch: (tenantId: number, body: BranchRequest) =>
+    request<{ message: string; branch: Branch }>(`/api/v1/tenants/${tenantId}/branches`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  getBranch: (branchId: number) =>
+    request<{ branch: Branch }>(`/api/v1/branches/${branchId}`).then((r) => r.branch),
+
+  updateBranch: (branchId: number, body: BranchRequest) =>
+    request<{ message: string }>(`/api/v1/branches/${branchId}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  deleteBranch: (branchId: number) =>
+    request<{ message: string }>(`/api/v1/branches/${branchId}`, { method: 'DELETE' }),
+
+  addBranchDevice: (branchId: number, body: BranchDeviceRequest) =>
+    request<{ message: string; device: BranchDevice }>(`/api/v1/branches/${branchId}/devices`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  removeBranchDevice: (branchId: number, deviceId: number) =>
+    request<{ message: string }>(`/api/v1/branches/${branchId}/devices/${deviceId}`, {
+      method: 'DELETE',
+    }),
+
+  addBranchPayrollNumber: (branchId: number, body: BranchPayrollNumberRequest) =>
+    request<{ message: string; payroll_number: BranchPayrollNumber }>(
+      `/api/v1/branches/${branchId}/payroll-numbers`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  removeBranchPayrollNumber: (branchId: number, payrollNumberId: number) =>
+    request<{ message: string }>(`/api/v1/branches/${branchId}/payroll-numbers/${payrollNumberId}`, {
+      method: 'DELETE',
+    }),
+
+  // ---------- Advertências ----------
+
+  listWarnings: (tenantId: number, filters?: { collaborator_id?: number; status?: WarningStatus }) => {
+    const params = new URLSearchParams()
+    if (filters?.collaborator_id != null) params.set('collaborator_id', String(filters.collaborator_id))
+    if (filters?.status) params.set('status', filters.status)
+    const qs = params.toString()
+    return request<{ warnings: Warning[] | null; total: number; counts: WarningCounts }>(
+      `/api/v1/tenants/${tenantId}/warnings${qs ? `?${qs}` : ''}`,
+    ).then((r) => ({
+      warnings: r.warnings ?? [],
+      total: r.total ?? 0,
+      counts: r.counts ?? { draft: 0, enviada: 0, assinada: 0 },
+    }))
+  },
+
+  createWarning: (tenantId: number, body: CreateWarningRequest) =>
+    request<{ message: string; warning: Warning }>(`/api/v1/tenants/${tenantId}/warnings`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  getWarning: (warningId: number) =>
+    request<{ warning: Warning }>(`/api/v1/warnings/${warningId}`).then((r) => r.warning),
+
+  updateWarning: (warningId: number, body: { body: string; branch_id?: number | null }) =>
+    request<{ message: string }>(`/api/v1/warnings/${warningId}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  updateWarningStatus: (warningId: number, status: WarningStatus) =>
+    request<{ message: string; status: string }>(`/api/v1/warnings/${warningId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+
+  deleteWarning: (warningId: number) =>
+    request<{ message: string }>(`/api/v1/warnings/${warningId}`, { method: 'DELETE' }),
 }

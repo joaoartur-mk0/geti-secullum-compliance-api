@@ -3,6 +3,8 @@ import {
   CalendarDays,
   ChevronRight,
   Clock,
+  FileWarning,
+  Layers,
   OctagonAlert,
   RefreshCw,
   ShieldCheck,
@@ -12,11 +14,28 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { ReactNode } from 'react'
-import { EmptyState, ErrorNote, SeverityBadge, Skeleton } from '../components/ui'
+import {
+  CategoryBadge,
+  EmptyState,
+  ErrorNote,
+  Select,
+  SeverityBadge,
+  Skeleton,
+  WarningStatusBadge,
+} from '../components/ui'
 import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
+import { CATEGORY_ORDER } from '../lib/categories'
 import { formatDate, formatDateTime } from '../lib/format'
-import type { AuditInconsistency, Report, ReportMetrics } from '../lib/types'
+import type {
+  AuditInconsistency,
+  Branch,
+  Occurrence,
+  OccurrenceCategory,
+  Report,
+  ReportMetrics,
+  WarningCounts,
+} from '../lib/types'
 
 type Loadable<T> =
   | { phase: 'loading' }
@@ -208,9 +227,200 @@ function Dashboard({
     <div className="mt-8 flex flex-col gap-6">
       <CollaboratorsSummary syncedTotal={syncedTotal} withAlerts={d.affectedCollaborators} />
       <KpiRow derived={d} metrics={m} reportCount={reports.length} />
+      <OccurrencesByCategory />
+      <WarningsSummary />
       <DistributionChart byType={d.byType} total={d.total} />
       <TrendChart series={series} />
       <TopCollaborators inconsistencies={latest.inconsistencies ?? []} />
+    </div>
+  )
+}
+
+// ---------- Ocorrências em aberto por categoria (UI/UX 1 e 4) ----------
+//
+// Diferente do restante do painel (derivado de `reports`), esta seção consome
+// GET /occurrences diretamente: é o que carrega a categoria (CRITICO/ALERTA/
+// ALTERACAO_ESCALA/NAO_CONFIRMADA) e o filtro por filial, que a lista de inconsistências
+// por relatório não tem.
+
+type OccLoadable =
+  | { phase: 'loading' }
+  | { phase: 'error'; message: string }
+  | { phase: 'ready'; occurrences: Occurrence[] }
+
+function OccurrencesByCategory() {
+  const { tenant } = useTenant()
+  const [branches, setBranches] = useState<Branch[]>([])
+  const [branchId, setBranchId] = useState<number | null>(null)
+  const [state, setState] = useState<OccLoadable>({ phase: 'loading' })
+  const [expanded, setExpanded] = useState<OccurrenceCategory | null>(null)
+
+  useEffect(() => {
+    api.listBranches(tenant.id).then(setBranches).catch(() => setBranches([]))
+  }, [tenant.id])
+
+  const load = useCallback(async () => {
+    setState({ phase: 'loading' })
+    try {
+      const { occurrences } = await api.listOccurrences(tenant.id, {
+        branch_id: branchId ?? undefined,
+      })
+      setState({ phase: 'ready', occurrences })
+    } catch (error) {
+      setState({
+        phase: 'error',
+        message: error instanceof ApiError ? error.message : 'Erro ao carregar ocorrências.',
+      })
+    }
+  }, [tenant.id, branchId])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const byCategory = useMemo(() => {
+    const map = new Map<OccurrenceCategory, Occurrence[]>()
+    if (state.phase === 'ready') {
+      for (const occ of state.occurrences) {
+        const list = map.get(occ.category) ?? []
+        list.push(occ)
+        map.set(occ.category, list)
+      }
+    }
+    return map
+  }, [state])
+
+  const total = state.phase === 'ready' ? state.occurrences.length : 0
+
+  return (
+    <section
+      aria-label="Ocorrências em aberto por categoria"
+      className="rounded-card border border-line bg-bg p-5 shadow-card"
+    >
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Layers size={16} className="text-ink-faint" aria-hidden />
+          <h2 className="text-sm font-semibold text-ink">Em aberto por categoria</h2>
+        </div>
+        {branches.length > 0 && (
+          <Select
+            aria-label="Filtrar por filial"
+            value={branchId ?? ''}
+            onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : null)}
+            className="min-w-40"
+          >
+            <option value="">Todas as filiais</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </Select>
+        )}
+      </div>
+
+      {state.phase === 'loading' && <Skeleton className="h-24 w-full" />}
+      {state.phase === 'error' && <ErrorNote message={state.message} onRetry={load} />}
+
+      {state.phase === 'ready' && total === 0 && (
+        <p className="py-6 text-center text-sm text-ink-soft">
+          {branchId ? 'Nenhuma ocorrência em aberto nesta filial.' : 'Nenhuma ocorrência em aberto — tudo em conformidade.'}
+        </p>
+      )}
+
+      {state.phase === 'ready' && total > 0 && (
+        <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {CATEGORY_ORDER.map((category) => {
+              const items = byCategory.get(category) ?? []
+              return (
+                <button
+                  key={category}
+                  type="button"
+                  disabled={items.length === 0}
+                  onClick={() => setExpanded((c) => (c === category ? null : category))}
+                  className={`flex flex-col gap-1 rounded-card border p-3 text-left transition-colors duration-150 disabled:cursor-default disabled:opacity-50 ${
+                    expanded === category ? 'border-brand' : 'border-line hover:border-ink-faint'
+                  }`}
+                >
+                  <CategoryBadge category={category} />
+                  <span className="text-xl font-semibold tabular-nums text-ink">{items.length}</span>
+                </button>
+              )
+            })}
+          </div>
+
+          {expanded && (byCategory.get(expanded)?.length ?? 0) > 0 && (
+            <ul className="mt-2 divide-y divide-line rounded-card border border-line">
+              {byCategory.get(expanded)!.map((occ) => (
+                <li key={occ.id}>
+                  <Link
+                    to={`/colaboradores/${occ.collaborator_id}`}
+                    className="flex items-center gap-3 px-3 py-2.5 transition-colors duration-150 hover:bg-panel"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-ink">{occ.collaborator_name}</p>
+                      <p className="truncate text-xs text-ink-soft">{occ.type}</p>
+                    </div>
+                    <ChevronRight size={16} aria-hidden className="shrink-0 text-ink-faint" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ---------- Advertências enviadas x assinadas (UI/UX 3) ----------
+
+function WarningsSummary() {
+  const { tenant } = useTenant()
+  const [counts, setCounts] = useState<WarningCounts | null>(null)
+
+  useEffect(() => {
+    api
+      .listWarnings(tenant.id)
+      .then((r) => setCounts(r.counts))
+      .catch(() => setCounts(null))
+  }, [tenant.id])
+
+  if (!counts) return null
+  const total = counts.draft + counts.enviada + counts.assinada
+  if (total === 0) return null
+
+  return (
+    <section aria-label="Advertências" className="rounded-card border border-line bg-bg p-5 shadow-card">
+      <div className="mb-4 flex items-center gap-2">
+        <FileWarning size={16} className="text-ink-faint" aria-hidden />
+        <h2 className="text-sm font-semibold text-ink">Advertências</h2>
+      </div>
+      <div className="flex flex-wrap items-center gap-4">
+        <WarningCount label="Rascunho" value={counts.draft} status="draft" />
+        <WarningCount label="Enviadas" value={counts.enviada} status="enviada" />
+        <WarningCount label="Assinadas" value={counts.assinada} status="assinada" />
+      </div>
+    </section>
+  )
+}
+
+function WarningCount({
+  label,
+  value,
+  status,
+}: {
+  label: string
+  value: number
+  status: 'draft' | 'enviada' | 'assinada'
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <WarningStatusBadge status={status} />
+      <span className="text-sm text-ink-soft">
+        <span className="font-semibold tabular-nums text-ink">{value}</span> {label.toLowerCase()}
+      </span>
     </div>
   )
 }

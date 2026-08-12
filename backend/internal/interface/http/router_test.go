@@ -13,7 +13,7 @@ import (
 func TestSetupRouter_RegistraRotasSemConflito(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := SetupRouter(nil, nil, nil, "tenant")
+	router := SetupRouter(nil, nil, nil, "tenant", nil)
 
 	got := make(map[string]bool)
 	for _, ri := range router.Routes() {
@@ -39,6 +39,31 @@ func TestSetupRouter_RegistraRotasSemConflito(t *testing.T) {
 		"GET /api/v1/tenants/:id/whatsapp/status",
 		"POST /api/v1/tenants/:id/whatsapp/instance",
 		"DELETE /api/v1/tenants/:id/whatsapp/instance",
+
+		// Ocorrências (máquina de estados) e autopreenchimento
+		"GET /api/v1/tenants/:id/occurrences",
+		"PATCH /api/v1/occurrences/:occurrenceId/ignore",
+		"GET /api/v1/occurrences/:occurrenceId/events",
+		"GET /api/v1/tenants/:id/collaborators/:secullumId/prefill",
+
+		// Filiais
+		"GET /api/v1/tenants/:id/branches",
+		"POST /api/v1/tenants/:id/branches",
+		"GET /api/v1/branches/:branchId",
+		"PUT /api/v1/branches/:branchId",
+		"DELETE /api/v1/branches/:branchId",
+		"POST /api/v1/branches/:branchId/devices",
+		"DELETE /api/v1/branches/:branchId/devices/:deviceId",
+		"POST /api/v1/branches/:branchId/payroll-numbers",
+		"DELETE /api/v1/branches/:branchId/payroll-numbers/:payrollNumberId",
+
+		// Advertências
+		"GET /api/v1/tenants/:id/warnings",
+		"POST /api/v1/tenants/:id/warnings",
+		"GET /api/v1/warnings/:warningId",
+		"PUT /api/v1/warnings/:warningId",
+		"PATCH /api/v1/warnings/:warningId/status",
+		"DELETE /api/v1/warnings/:warningId",
 	}
 	for _, w := range want {
 		if !got[w] {

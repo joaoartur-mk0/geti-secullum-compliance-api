@@ -9,6 +9,7 @@ import (
 	"backend/internal/interface/http/handlers"
 	"backend/internal/interface/http/middleware"
 	"backend/internal/interface/http/swagger"
+	"backend/internal/usecase"
 )
 
 // SetupRouter configura os middlewares e inicializa todas as rotas da API.
@@ -16,7 +17,9 @@ import (
 // de forma segura sob concorrência, o WhatsAppManager (client da Evolution) e o prefixo
 // de instância por-tenant. O endpoint /health é registrado no main.go, pois depende da
 // conexão do banco e do broker para reportar o estado real da infra.
-func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr domain.WhatsAppManager, whatsappPrefix string) *gin.Engine {
+// secullumSvc é opcional: quando nil, a resolução de filial pelo aparelho da batida é
+// pulada e a filial vem do nº de folha (ver usecase.BranchResolverService).
+func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr domain.WhatsAppManager, whatsappPrefix string, secullumSvc domain.SecullumService) *gin.Engine {
 	router := gin.Default()
 
 	// CORS de desenvolvimento (permite o painel de testes em outra porta).
@@ -29,6 +32,12 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 	collaboratorRepo := repositories.NewCollaboratorRepository(db)
 	userRepo := repositories.NewUserRepository(db)
 	userTenantRepo := repositories.NewUserTenantRepository(db)
+	occurrenceRepo := repositories.NewOccurrenceRepository(db)
+	branchRepo := repositories.NewBranchRepository(db)
+	warningRepo := repositories.NewWarningRepository(db)
+
+	// Resolvedor de filial (aparelho da batida, com fallback pelo nº de folha).
+	branchResolver := usecase.NewBranchResolverService(branchRepo)
 
 	// Documentação (Swagger UI em /swagger, spec em /openapi.yaml)
 	swagger.Register(router)
@@ -39,9 +48,12 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 	staffHandler := handlers.NewStaffHandler(staffRepo, userTenantRepo)
 	settingsHandler := handlers.NewSettingsHandler(tenantRepo)
 	reportHandler := handlers.NewReportHandler(reportRepo)
-	collaboratorHandler := handlers.NewCollaboratorHandler(collaboratorRepo)
+	collaboratorHandler := handlers.NewCollaboratorHandler(collaboratorRepo, tenantRepo, branchResolver, secullumSvc)
 	whatsappHandler := handlers.NewWhatsAppHandler(whatsappMgr, whatsappPrefix)
 	userHandler := handlers.NewUserHandler(userRepo, userTenantRepo)
+	occurrenceHandler := handlers.NewOccurrenceHandler(occurrenceRepo, collaboratorRepo, tenantRepo, userTenantRepo, branchResolver, secullumSvc)
+	branchHandler := handlers.NewBranchHandler(branchRepo, userTenantRepo)
+	warningHandler := handlers.NewWarningHandler(warningRepo, collaboratorRepo, userTenantRepo)
 
 	// Login é a única rota de /api/v1 pública: sem token não há como obter um, e o
 	// cadastro de novos usuários (register) passa a exigir um super admin autenticado.
@@ -90,6 +102,26 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 		v1.PUT("/staffs/:staffId", staffHandler.Update)
 		v1.DELETE("/staffs/:staffId", staffHandler.Delete)
 
+		// Ocorrências — mesma convenção: o id da ocorrência é a chave, o tenant sai do
+		// registro e o acesso é conferido dentro do handler.
+		v1.PATCH("/occurrences/:occurrenceId/ignore", occurrenceHandler.Ignore)
+		v1.GET("/occurrences/:occurrenceId/events", occurrenceHandler.Events)
+
+		// Filiais (aparelhos e nº de folha vinculados)
+		v1.GET("/branches/:branchId", branchHandler.Get)
+		v1.PUT("/branches/:branchId", branchHandler.Update)
+		v1.DELETE("/branches/:branchId", branchHandler.Delete)
+		v1.POST("/branches/:branchId/devices", branchHandler.AddDevice)
+		v1.DELETE("/branches/:branchId/devices/:deviceId", branchHandler.RemoveDevice)
+		v1.POST("/branches/:branchId/payroll-numbers", branchHandler.AddPayrollNumber)
+		v1.DELETE("/branches/:branchId/payroll-numbers/:payrollNumberId", branchHandler.RemovePayrollNumber)
+
+		// Advertências
+		v1.GET("/warnings/:warningId", warningHandler.Get)
+		v1.PUT("/warnings/:warningId", warningHandler.Update)
+		v1.PATCH("/warnings/:warningId/status", warningHandler.UpdateStatus)
+		v1.DELETE("/warnings/:warningId", warningHandler.Delete)
+
 		// Recursos aninhados sob /tenants/:id — todos exigem vínculo com o tenant
 		// (ou super admin). É este middleware que garante o isolamento: dados de um
 		// tenant nunca vazam para quem não tem vínculo com ele.
@@ -110,8 +142,23 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 			// Relatórios de auditoria (painel de consulta)
 			tenantScoped.GET("/reports", reportHandler.List)
 
+			// Ocorrências (máquina de estados). Substitui a leitura de "lista de
+			// inconsistências por varredura": aqui cada ocorrência aparece UMA vez, com
+			// o estado atual, já enriquecida com horário fixo e filial.
+			tenantScoped.GET("/occurrences", occurrenceHandler.List)
+
+			// Filiais do tenant
+			tenantScoped.GET("/branches", branchHandler.List)
+			tenantScoped.POST("/branches", branchHandler.Create)
+
+			// Advertências do tenant
+			tenantScoped.GET("/warnings", warningHandler.List)
+			tenantScoped.POST("/warnings", warningHandler.Create)
+
 			// Colaboradores sincronizados (espelho local do tenant)
 			tenantScoped.GET("/collaborators", collaboratorHandler.List)
+			// Autopreenchimento da tela de colaborador: horário fixo (Secullum) + filial.
+			tenantScoped.GET("/collaborators/:secullumId/prefill", collaboratorHandler.Prefill)
 
 			// WhatsApp (instância da Evolution API por tenant)
 			tenantScoped.GET("/whatsapp/status", whatsappHandler.Status)

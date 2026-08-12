@@ -30,6 +30,22 @@ func idParam(c *gin.Context, op, name string) (int, error) {
 	return id, nil
 }
 
+// actorUserID devolve o id do usuário autenticado, para registrar QUEM tomou uma decisão
+// (ignorar uma ocorrência, emitir uma advertência). Devolve nil se não houver identidade
+// no contexto — as transições automáticas do worker não têm autor.
+func actorUserID(c *gin.Context) *int {
+	v, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		return nil
+	}
+	uid, ok := v.(uint)
+	if !ok || uid == 0 {
+		return nil
+	}
+	id := int(uid)
+	return &id
+}
+
 // ensureTenantAccess garante que o usuário autenticado (via contexto, injetado pelo
 // RequireAuth) seja super admin ou tenha vínculo com o tenant informado. Usado nos
 // handlers cujo recurso não carrega o id do tenant diretamente no parâmetro de rota

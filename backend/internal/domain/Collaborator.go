@@ -9,6 +9,11 @@ type Collaborator struct {
 	Cpf        string
 	Celular    string
 
+	// NumeroFolha é o número do colaborador na folha de pagamento (string na Secullum,
+	// pode ter zeros à esquerda). Usado para resolver a filial quando a batida do dia não
+	// identifica o aparelho — ver domain.BranchRepository.FindByPayrollNumber.
+	NumeroFolha string
+
 	// HorarioNumero identifica, na Secullum, qual jornada contratual (Horarios) este
 	// colaborador segue. Preenchido pelo client em GetCollaborators; o Synchronizer o
 	// usa para buscar (e deduplicar) as jornadas via GetHorario antes de montar Schedules.

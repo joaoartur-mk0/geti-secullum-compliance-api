@@ -31,6 +31,18 @@ tags:
     description: Gestores (staff) que recebem alertas
   - name: Relatórios
     description: Painel de consulta de auditorias
+  - name: Ocorrências
+    description: >
+      Máquina de estados das inconsistências. Cada ocorrência tem identidade estável
+      (colaborador + data + tipo) e evolui entre aberta / atualizada /
+      resolvida_automatica / resolvida_manual, com log de transições. Ver
+      docs/06_Occurrences_Backend_Contract.md.
+  - name: Filiais
+    description: Unidades físicas, aparelhos de ponto e gestor responsável
+  - name: Advertências
+    description: Registro do processo de advertência (rascunho, enviada, assinada)
+  - name: Colaboradores
+    description: Espelho local de funcionários e autopreenchimento das telas
 
 paths:
   /health:
@@ -200,6 +212,7 @@ paths:
                 properties:
                   message: { type: string }
                   tenant_id: { type: integer }
+                  date: { type: string, example: "2026-07-12" }
                   status: { type: string, example: processing }
         "400": { $ref: "#/components/responses/ValidationError" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -425,6 +438,431 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Report" }
 
+  /api/v1/tenants/{id}/occurrences:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    get:
+      tags: [Ocorrências]
+      summary: Lista as ocorrências do tenant, já com horário fixo e filial
+      description: >
+        Cada ocorrência aparece UMA vez, com o estado atual — não é a lista de
+        inconsistências por varredura. Sem o filtro `state`, devolve apenas o que ainda
+        pede ação (aberta e atualizada).
+      parameters:
+        - name: date
+          in: query
+          schema: { type: string, example: "2026-07-12" }
+          description: Dia único (YYYY-MM-DD). Tem precedência sobre start_date/end_date.
+        - name: start_date
+          in: query
+          schema: { type: string, example: "2026-07-01" }
+        - name: end_date
+          in: query
+          schema: { type: string, example: "2026-07-31" }
+        - name: state
+          in: query
+          schema: { type: string, example: "aberta,atualizada" }
+          description: Lista separada por vírgula. Padrão "aberta,atualizada".
+        - name: collaborator_id
+          in: query
+          schema: { type: integer }
+          description: Id do colaborador na Secullum.
+        - name: branch_id
+          in: query
+          schema: { type: integer }
+          description: Filtra pela filial resolvida (aparelho ou nº de folha).
+      responses:
+        "200":
+          description: Lista de ocorrências
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  occurrences:
+                    type: array
+                    items: { $ref: "#/components/schemas/Occurrence" }
+                  total: { type: integer }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /api/v1/occurrences/{occurrenceId}/ignore:
+    parameters:
+      - $ref: "#/components/parameters/OccurrenceId"
+    patch:
+      tags: [Ocorrências]
+      summary: Ignora uma ocorrência (marca resolvida_manual)
+      description: >
+        Decisão pegajosa: as varreduras seguintes continuam apurando a inconsistência,
+        mas não a trazem de volta ao radar. Motivo e autor ficam no log de eventos.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, example: "Abonado pelo RH — atestado entregue" }
+      responses:
+        "200":
+          description: Ocorrência ignorada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  state: { type: string, example: resolvida_manual }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/occurrences/{occurrenceId}/events:
+    parameters:
+      - $ref: "#/components/parameters/OccurrenceId"
+    get:
+      tags: [Ocorrências]
+      summary: Log de transições da ocorrência (do mais antigo ao mais recente)
+      responses:
+        "200":
+          description: Histórico de transições
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/OccurrenceEvent" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/tenants/{id}/collaborators/{secullumId}/prefill:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+      - name: secullumId
+        in: path
+        required: true
+        description: Id do colaborador na Secullum
+        schema: { type: integer }
+    get:
+      tags: [Colaboradores]
+      summary: Horário fixo e filial do colaborador, prontos para autopreenchimento
+      parameters:
+        - name: date
+          in: query
+          schema: { type: string, example: "2026-07-12" }
+          description: >
+            Opcional. Quando informada, tenta resolver a filial pelo aparelho da batida
+            daquele dia; sem ela (ou se a Secullum falhar), a filial vem do nº de folha.
+      responses:
+        "200":
+          description: Dados de autopreenchimento
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collaborator:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      secullum_id: { type: integer }
+                      name: { type: string }
+                      numero_folha: { type: string, example: "9" }
+                  horario_fixo:
+                    type: array
+                    items: { $ref: "#/components/schemas/FixedSchedule" }
+                  filial:
+                    allOf: [{ $ref: "#/components/schemas/BranchSummary" }]
+                    nullable: true
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/tenants/{id}/branches:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    get:
+      tags: [Filiais]
+      summary: Lista as filiais do tenant
+      responses:
+        "200":
+          description: Lista de filiais
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  branches:
+                    type: array
+                    items: { $ref: "#/components/schemas/Branch" }
+    post:
+      tags: [Filiais]
+      summary: Cadastra uma filial
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BranchRequest" }
+      responses:
+        "201":
+          description: Filial criada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  branch: { $ref: "#/components/schemas/Branch" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /api/v1/branches/{branchId}:
+    parameters:
+      - $ref: "#/components/parameters/BranchId"
+    get:
+      tags: [Filiais]
+      summary: Detalha uma filial (com aparelhos e nº de folha vinculados)
+      responses:
+        "200":
+          description: Filial
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  branch: { $ref: "#/components/schemas/Branch" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    put:
+      tags: [Filiais]
+      summary: Atualiza a filial e os dados do gestor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BranchRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    delete:
+      tags: [Filiais]
+      summary: Exclui a filial (junto com aparelhos e nº de folha vinculados)
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/branches/{branchId}/devices:
+    parameters:
+      - $ref: "#/components/parameters/BranchId"
+    post:
+      tags: [Filiais]
+      summary: Vincula um aparelho de ponto à filial
+      description: >
+        Um aparelho pertence a uma única filial: vincular um `secullum_equip_id` que já
+        esteja em outra filial devolve 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [secullum_equip_id]
+              properties:
+                secullum_equip_id: { type: integer, example: 4 }
+                label: { type: string, example: "Recepção" }
+      responses:
+        "201":
+          description: Aparelho vinculado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  device: { $ref: "#/components/schemas/BranchDevice" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/branches/{branchId}/devices/{deviceId}:
+    parameters:
+      - $ref: "#/components/parameters/BranchId"
+      - name: deviceId
+        in: path
+        required: true
+        schema: { type: integer }
+    delete:
+      tags: [Filiais]
+      summary: Desvincula um aparelho da filial
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/branches/{branchId}/payroll-numbers:
+    parameters:
+      - $ref: "#/components/parameters/BranchId"
+    post:
+      tags: [Filiais]
+      summary: Lota um colaborador (nº de folha) na filial
+      description: >
+        É o caminho de resolução usado quando a batida não identifica o aparelho — o caso
+        das marcações feitas pelo app/web. Único por tenant: 409 se já pertencer a outra
+        filial.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [numero]
+              properties:
+                numero: { type: string, example: "9" }
+      responses:
+        "201":
+          description: Nº de folha vinculado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  payroll_number: { $ref: "#/components/schemas/BranchPayrollNumber" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/branches/{branchId}/payroll-numbers/{payrollNumberId}:
+    parameters:
+      - $ref: "#/components/parameters/BranchId"
+      - name: payrollNumberId
+        in: path
+        required: true
+        schema: { type: integer }
+    delete:
+      tags: [Filiais]
+      summary: Remove a lotação de um nº de folha na filial
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/tenants/{id}/warnings:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    get:
+      tags: [Advertências]
+      summary: Lista as advertências do tenant
+      parameters:
+        - name: collaborator_id
+          in: query
+          schema: { type: integer }
+        - name: status
+          in: query
+          schema: { type: string, enum: [draft, enviada, assinada] }
+      responses:
+        "200":
+          description: Lista de advertências
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  warnings:
+                    type: array
+                    items: { $ref: "#/components/schemas/Warning" }
+                  total: { type: integer }
+                  counts:
+                    type: object
+                    description: Contagem por status (alimenta o indicador enviadas x assinadas).
+                    properties:
+                      draft: { type: integer }
+                      enviada: { type: integer }
+                      assinada: { type: integer }
+        "400": { $ref: "#/components/responses/ValidationError" }
+    post:
+      tags: [Advertências]
+      summary: Registra uma advertência (nasce em rascunho por padrão)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateWarningRequest" }
+      responses:
+        "201":
+          description: Advertência registrada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  warning: { $ref: "#/components/schemas/Warning" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /api/v1/warnings/{warningId}:
+    parameters:
+      - $ref: "#/components/parameters/WarningId"
+    get:
+      tags: [Advertências]
+      summary: Detalha uma advertência
+      responses:
+        "200":
+          description: Advertência
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  warning: { $ref: "#/components/schemas/Warning" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    put:
+      tags: [Advertências]
+      summary: Edita o texto da advertência (somente em rascunho)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                body: { type: string }
+                branch_id: { type: integer, nullable: true }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+    delete:
+      tags: [Advertências]
+      summary: Exclui a advertência (somente em rascunho)
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/warnings/{warningId}/status:
+    parameters:
+      - $ref: "#/components/parameters/WarningId"
+    patch:
+      tags: [Advertências]
+      summary: Avança o status da advertência
+      description: >
+        O fluxo é de mão única — draft → enviada → assinada. Repetir o status atual é
+        idempotente; qualquer outro salto devolve 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [draft, enviada, assinada] }
+      responses:
+        "200":
+          description: Status atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: string, example: enviada }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -448,6 +886,24 @@ components:
       required: true
       description: Id do usuário
       schema: { type: integer }
+    OccurrenceId:
+      name: occurrenceId
+      in: path
+      required: true
+      description: Id local da ocorrência
+      schema: { type: integer }
+    BranchId:
+      name: branchId
+      in: path
+      required: true
+      description: Id local da filial
+      schema: { type: integer }
+    WarningId:
+      name: warningId
+      in: path
+      required: true
+      description: Id local da advertência
+      schema: { type: integer }
 
   responses:
     Message:
@@ -465,6 +921,11 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     UnauthorizedError:
       description: Token ausente, inválido ou expirado
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ForbiddenError:
+      description: Sem vínculo com o tenant dono do recurso
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -525,6 +986,13 @@ components:
       required: [tenant_id]
       properties:
         tenant_id: { type: integer, example: 1 }
+        date:
+          type: string
+          example: "2026-07-12"
+          description: >
+            Opcional. Dia a auditar (YYYY-MM-DD), para conferir a situação de uma data
+            específica sob demanda. Omitido, audita D-1 — o mesmo que faz a varredura
+            diária automática. Só datas já encerradas (anteriores a hoje) são aceitas.
 
     Tenant:
       type: object
@@ -605,3 +1073,150 @@ components:
         inconsistencies:
           type: array
           items: { $ref: "#/components/schemas/AuditInconsistency" }
+
+    Occurrence:
+      type: object
+      description: >
+        Inconsistência com identidade estável (tenant + colaborador + data + tipo) e
+        estado próprio. Auditar o mesmo dia de novo atualiza esta linha; nunca cria outra.
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        collaborator_id: { type: integer, description: "Id do colaborador na Secullum" }
+        collaborator_name: { type: string }
+        date: { type: string, example: "2026-07-12" }
+        type: { type: string, example: "Interjornada Curta" }
+        severity: { type: string, enum: [ALERTA, CRITICO, OPERACIONAL] }
+        category:
+          type: string
+          enum: [CRITICO, ALERTA, ALTERACAO_ESCALA, NAO_CONFIRMADA]
+          description: >
+            Agrupamento de exibição, derivado de estado + severidade. NAO_CONFIRMADA
+            quando o valor mudou desde a última varredura (estado atualizada);
+            ALTERACAO_ESCALA para a severidade OPERACIONAL (escala desatualizada).
+        description: { type: string }
+        state:
+          type: string
+          enum: [aberta, atualizada, resolvida_automatica, resolvida_manual]
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        times_seen: { type: integer, description: "Quantas varreduras apuraram esta ocorrência" }
+        resolved_at: { type: string, format: date-time, nullable: true }
+        ignored_reason: { type: string }
+        ignored_by_user_id: { type: integer, nullable: true }
+        horario_fixo:
+          type: array
+          items: { $ref: "#/components/schemas/FixedSchedule" }
+        filial:
+          allOf: [{ $ref: "#/components/schemas/BranchSummary" }]
+          nullable: true
+
+    OccurrenceEvent:
+      type: object
+      description: Transição registrada no log append-only da ocorrência.
+      properties:
+        id: { type: integer }
+        type:
+          type: string
+          enum: [criada, atualizada, resolvida_automatica, resolvida_manual, reaberta]
+        from_state: { type: string }
+        to_state: { type: string }
+        from_description: { type: string }
+        to_description: { type: string }
+        reason: { type: string, description: "Motivo informado ao ignorar" }
+        actor_user_id: { type: integer, nullable: true, description: "null nas transições automáticas" }
+        created_at: { type: string, format: date-time }
+
+    FixedSchedule:
+      type: object
+      description: Um dia da grade de horário fixo cadastrada na Secullum.
+      properties:
+        dia_semana: { type: integer }
+        entrada_1: { type: string, example: "08:00" }
+        saida_1: { type: string, example: "12:00" }
+        entrada_2: { type: string, example: "14:00" }
+        saida_2: { type: string, example: "18:00" }
+        carga_minutos: { type: integer, example: 480 }
+
+    BranchSummary:
+      type: object
+      description: Filial resolvida, com a origem da informação.
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        manager_name: { type: string }
+        manager_phone: { type: string }
+        source:
+          type: string
+          enum: [aparelho, numero_folha]
+          description: >
+            "aparelho" = deduzida do EquipId da batida do dia (a pessoa esteve lá);
+            "numero_folha" = do cadastro de lotação.
+
+    Branch:
+      type: object
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        name: { type: string, example: "Filial Centro" }
+        manager_name: { type: string, example: "Fulano de Tal" }
+        manager_phone: { type: string, example: "5531999999999" }
+        devices:
+          type: array
+          items: { $ref: "#/components/schemas/BranchDevice" }
+        payroll_numbers:
+          type: array
+          items: { $ref: "#/components/schemas/BranchPayrollNumber" }
+
+    BranchRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        manager_name: { type: string }
+        manager_phone: { type: string }
+
+    BranchDevice:
+      type: object
+      properties:
+        id: { type: integer }
+        branch_id: { type: integer }
+        secullum_equip_id: { type: integer, description: "EquipId do relógio de ponto na Secullum" }
+        label: { type: string, example: "Recepção" }
+
+    BranchPayrollNumber:
+      type: object
+      properties:
+        id: { type: integer }
+        branch_id: { type: integer }
+        numero: { type: string, example: "9" }
+
+    Warning:
+      type: object
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        occurrence_id: { type: integer, nullable: true }
+        collaborator_id: { type: integer, description: "Id do colaborador na Secullum" }
+        collaborator_name: { type: string }
+        branch_id: { type: integer, nullable: true }
+        body: { type: string }
+        status: { type: string, enum: [draft, enviada, assinada] }
+        created_by_user_id: { type: integer, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        sent_at: { type: string, format: date-time, nullable: true }
+        signed_at: { type: string, format: date-time, nullable: true }
+
+    CreateWarningRequest:
+      type: object
+      required: [collaborator_id]
+      properties:
+        collaborator_id: { type: integer, description: "Id do colaborador na Secullum" }
+        occurrence_id: { type: integer, nullable: true, description: "Ocorrência que motivou a advertência" }
+        branch_id: { type: integer, nullable: true }
+        body: { type: string }
+        status:
+          type: string
+          enum: [draft, enviada, assinada]
+          description: Opcional; omitido, a advertência nasce como rascunho.

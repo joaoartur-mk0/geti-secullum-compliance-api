@@ -7,6 +7,11 @@ type Severity string
 const (
 	SeverityAlert    Severity = "ALERTA"
 	SeverityCritical Severity = "CRITICO"
+	// SeverityOperational marca o que NÃO é infração trabalhista, e sim cadastro
+	// desatualizado — tipicamente a escala mensal variável que o gestor trocou sem
+	// registrar na Secullum. Exige correção do cadastro, não ação disciplinar, e some
+	// sozinha assim que a escala é corrigida.
+	SeverityOperational Severity = "OPERACIONAL"
 )
 
 func (s Severity) OrDefault(def Severity) Severity {
@@ -37,6 +42,12 @@ type DailyPunch struct {
 	Previstas      []PunchPair
 	Folga          bool // dia de folga/DSR segundo a Secullum
 	Neutro         bool // dia neutro: não gera saldo, sem carga a cumprir
+
+	// EquipIDs são os aparelhos (relógios de ponto) em que as marcações do dia foram
+	// registradas, sem repetição e na ordem de uso. Vazio quando todas as batidas vieram
+	// do app/web ou de inclusão manual — o caso mais comum nos dados reais desta
+	// operação, e a razão de a resolução de filial ter um fallback por nº de folha.
+	EquipIDs []int
 }
 
 // ParseClock interpreta um horário "HH:MM" como minutos desde a meia-noite.

@@ -1,6 +1,7 @@
 // Tipos espelhando o contrato do backend (backend/internal/interface/http/swagger/openapi.yaml)
+// Ocorrências/filiais/advertências: ver docs/06_Occurrences_Backend_Contract.md
 
-export type Severity = 'ALERTA' | 'CRITICO'
+export type Severity = 'ALERTA' | 'CRITICO' | 'OPERACIONAL'
 
 export interface Tenant {
   id: number
@@ -83,6 +84,149 @@ export interface Collaborator {
   id: number
   secullum_id: number
   name: string
+}
+
+// ---------- Ocorrências (máquina de estados) ----------
+
+export type OccurrenceState = 'aberta' | 'atualizada' | 'resolvida_automatica' | 'resolvida_manual'
+
+// Eixo de EXIBIÇÃO, diferente de Severity (eixo jurídico). ALTERACAO_ESCALA e
+// NAO_CONFIRMADA precisam de cor própria: nenhuma das duas é "quão grave", é "que tipo de
+// atenção pede" — cadastro a corrigir, ou reconferência porque o valor mudou.
+export type OccurrenceCategory = 'CRITICO' | 'ALERTA' | 'ALTERACAO_ESCALA' | 'NAO_CONFIRMADA'
+
+export interface FixedScheduleDay {
+  dia_semana: number
+  entrada_1: string
+  saida_1: string
+  entrada_2: string
+  saida_2: string
+  carga_minutos: number
+}
+
+export type BranchResolutionSource = 'aparelho' | 'numero_folha' | ''
+
+export interface BranchSummary {
+  id: number
+  name: string
+  manager_name: string
+  manager_phone: string
+  source: BranchResolutionSource
+}
+
+export interface Occurrence {
+  id: number
+  tenant_id: number
+  collaborator_id: number // id na Secullum
+  collaborator_name: string
+  date: string
+  type: string
+  severity: Severity
+  category: OccurrenceCategory
+  description: string
+  state: OccurrenceState
+  first_seen_at: string
+  last_seen_at: string
+  times_seen: number
+  resolved_at: string | null
+  ignored_reason?: string
+  ignored_by_user_id?: number | null
+  horario_fixo: FixedScheduleDay[]
+  filial: BranchSummary | null
+}
+
+export interface OccurrenceEvent {
+  id: number
+  type: 'criada' | 'atualizada' | 'resolvida_automatica' | 'resolvida_manual' | 'reaberta'
+  from_state: string
+  to_state: string
+  from_description: string
+  to_description: string
+  reason: string
+  actor_user_id: number | null
+  created_at: string
+}
+
+// ---------- Filiais ----------
+
+export interface BranchDevice {
+  id: number
+  branch_id: number
+  secullum_equip_id: number
+  label: string
+}
+
+export interface BranchPayrollNumber {
+  id: number
+  branch_id: number
+  numero: string
+}
+
+export interface Branch {
+  id: number
+  tenant_id: number
+  name: string
+  manager_name: string
+  manager_phone: string
+  devices: BranchDevice[]
+  payroll_numbers: BranchPayrollNumber[]
+}
+
+export interface BranchRequest {
+  name: string
+  manager_name: string
+  manager_phone: string
+}
+
+export interface BranchDeviceRequest {
+  secullum_equip_id: number
+  label: string
+}
+
+export interface BranchPayrollNumberRequest {
+  numero: string
+}
+
+// ---------- Autopreenchimento (colaborador) ----------
+
+export interface CollaboratorPrefill {
+  collaborator: { id: number; secullum_id: number; name: string; numero_folha: string }
+  horario_fixo: FixedScheduleDay[]
+  filial: BranchSummary | null
+}
+
+// ---------- Advertências ----------
+
+export type WarningStatus = 'draft' | 'enviada' | 'assinada'
+
+export interface Warning {
+  id: number
+  tenant_id: number
+  occurrence_id: number | null
+  collaborator_id: number // id na Secullum
+  collaborator_name: string
+  branch_id: number | null
+  body: string
+  status: WarningStatus
+  created_by_user_id: number | null
+  created_at: string
+  updated_at: string
+  sent_at: string | null
+  signed_at: string | null
+}
+
+export interface CreateWarningRequest {
+  collaborator_id: number
+  occurrence_id?: number | null
+  branch_id?: number | null
+  body: string
+  status?: WarningStatus
+}
+
+export interface WarningCounts {
+  draft: number
+  enviada: number
+  assinada: number
 }
 
 // Estado da instância de WhatsApp do tenant na Evolution API.

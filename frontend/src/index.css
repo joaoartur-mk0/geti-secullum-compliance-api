@@ -31,6 +31,17 @@
   --color-ok: oklch(0.5 0.125 150);
   --color-ok-bg: oklch(0.962 0.03 150);
 
+  /* Operacional: cadastro/escala desatualizada. NÃO é infração trabalhista — precisa de
+     cor própria justamente para não competir com crítico e alerta na leitura de relance.
+     Azul, longe do eixo quente da severidade. */
+  --color-operacional: oklch(0.5 0.115 250);
+  --color-operacional-bg: oklch(0.958 0.025 250);
+
+  /* Não confirmada: o valor mudou desde a última varredura e o que o gestor viu não vale
+     mais. É um estado de conferência, não de gravidade. */
+  --color-revisar: oklch(0.5 0.14 305);
+  --color-revisar-bg: oklch(0.958 0.028 305);
+
   --radius-card: 0.75rem;
   --radius-field: 0.5rem;
 

@@ -1,4 +1,15 @@
-import { AlertTriangle, CheckCircle2, Loader2, OctagonAlert, X } from 'lucide-react'
+import {
+  AlertTriangle,
+  Ban,
+  CheckCircle2,
+  Loader2,
+  OctagonAlert,
+  PenLine,
+  RotateCcw,
+  Send,
+  Settings2,
+  X,
+} from 'lucide-react'
 import {
   createContext,
   useCallback,
@@ -11,7 +22,8 @@ import {
   type ReactNode,
   type SelectHTMLAttributes,
 } from 'react'
-import type { Severity } from '../lib/types'
+import { CATEGORY_CLASSES, CATEGORY_HINT, CATEGORY_LABEL } from '../lib/categories'
+import type { OccurrenceCategory, OccurrenceState, Severity, WarningStatus } from '../lib/types'
 
 // ---------- Botões ----------
 
@@ -108,7 +120,18 @@ export function Toggle({
 
 // ---------- Severidade ----------
 
+// OPERACIONAL não é "quão grave" — é cadastro/escala a corrigir (ver
+// domain.SeverityOperational no backend). Cor e ícone próprios para não competir com
+// crítico/alerta na leitura de relance (Design Principle 1 do PRODUCT.md).
 export function SeverityBadge({ severity }: { severity: Severity }) {
+  if (severity === 'OPERACIONAL') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-operacional-bg px-2.5 py-1 text-xs font-semibold text-operacional">
+        <Settings2 size={13} aria-hidden />
+        Operacional
+      </span>
+    )
+  }
   const critical = severity === 'CRITICO'
   return (
     <span
@@ -118,6 +141,96 @@ export function SeverityBadge({ severity }: { severity: Severity }) {
     >
       {critical ? <OctagonAlert size={13} aria-hidden /> : <AlertTriangle size={13} aria-hidden />}
       {critical ? 'Crítico' : 'Alerta'}
+    </span>
+  )
+}
+
+// ---------- Categoria de ocorrência (eixo de exibição — ver lib/categories.ts) ----------
+
+const categoryIcon: Record<OccurrenceCategory, typeof OctagonAlert> = {
+  CRITICO: OctagonAlert,
+  ALERTA: AlertTriangle,
+  ALTERACAO_ESCALA: Settings2,
+  NAO_CONFIRMADA: RotateCcw,
+}
+
+export function CategoryBadge({ category }: { category: OccurrenceCategory }) {
+  const Icon = categoryIcon[category]
+  const classes = CATEGORY_CLASSES[category]
+  return (
+    <span
+      title={CATEGORY_HINT[category]}
+      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${classes.bg} ${classes.text}`}
+    >
+      <Icon size={13} aria-hidden />
+      {CATEGORY_LABEL[category]}
+    </span>
+  )
+}
+
+// ---------- Estado da ocorrência ----------
+
+const stateLabel: Record<OccurrenceState, string> = {
+  aberta: 'Aberta',
+  atualizada: 'Atualizada',
+  resolvida_automatica: 'Resolvida',
+  resolvida_manual: 'Ignorada',
+}
+
+export function OccurrenceStateBadge({ state }: { state: OccurrenceState }) {
+  if (state === 'resolvida_automatica') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-ok-bg px-2.5 py-1 text-xs font-semibold text-ok">
+        <CheckCircle2 size={13} aria-hidden />
+        {stateLabel[state]}
+      </span>
+    )
+  }
+  if (state === 'resolvida_manual') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-panel px-2.5 py-1 text-xs font-semibold text-ink-soft">
+        <Ban size={13} aria-hidden />
+        {stateLabel[state]}
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-revisar-bg px-2.5 py-1 text-xs font-semibold text-revisar">
+      {state === 'atualizada' ? <RotateCcw size={13} aria-hidden /> : <OctagonAlert size={13} aria-hidden />}
+      {stateLabel[state]}
+    </span>
+  )
+}
+
+// ---------- Status de advertência ----------
+
+const warningStatusLabel: Record<WarningStatus, string> = {
+  draft: 'Rascunho',
+  enviada: 'Enviada',
+  assinada: 'Assinada',
+}
+
+export function WarningStatusBadge({ status }: { status: WarningStatus }) {
+  if (status === 'assinada') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-ok-bg px-2.5 py-1 text-xs font-semibold text-ok">
+        <CheckCircle2 size={13} aria-hidden />
+        {warningStatusLabel[status]}
+      </span>
+    )
+  }
+  if (status === 'enviada') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-alerta-bg px-2.5 py-1 text-xs font-semibold text-alerta">
+        <Send size={13} aria-hidden />
+        {warningStatusLabel[status]}
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-panel px-2.5 py-1 text-xs font-semibold text-ink-soft">
+      <PenLine size={13} aria-hidden />
+      {warningStatusLabel[status]}
     </span>
   )
 }

@@ -47,6 +47,12 @@ func main() {
 		&models.Report{},
 		&models.User{},
 		&models.UserTenant{},
+		&models.Occurrence{},
+		&models.OccurrenceEvent{},
+		&models.Branch{},
+		&models.BranchDevice{},
+		&models.BranchPayrollNumber{},
+		&models.Warning{},
 	)
 	if err != nil {
 		log.Fatalf("Falha no AutoMigrate do GORM: %v", err)
@@ -113,6 +119,11 @@ func main() {
 	// Motor de Regras (O Cérebro)
 	auditorCore := usecase.NewAuditorService()
 
+	// Reconciliador de ocorrências: recebe o que o motor apurou e move a máquina de
+	// estados (nova / atualizada / resolvida sozinha), em vez de empilhar uma lista nova
+	// a cada varredura.
+	reconciler := usecase.NewReconcilerService(repositories.NewOccurrenceRepository(db))
+
 	// Sincronizador de colaboradores: busca o espelho de funcionários/jornadas na
 	// Secullum e o persiste localmente, alimentando o worker de auditoria com dados
 	// reais (em vez do colaborador mockado usado nas fases iniciais do projeto).
@@ -143,7 +154,7 @@ func main() {
 	// =====================================================================
 	// 4. INICIALIZAÇÃO DOS WORKERS (CONSUMERS DO RABBITMQ)
 	// =====================================================================
-	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, collabRepo, secullumSvc, reportRepo, auditorCore, publisherPool, evolutionPrefix)
+	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, collabRepo, secullumSvc, reportRepo, auditorCore, reconciler, publisherPool, evolutionPrefix)
 
 	// A palavra reservada 'go' faz esta função rodar em background.
 	// Assim, ela fica a escutar a fila infinitamente sem parar o servidor web.
@@ -193,7 +204,7 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	router := appHttp.SetupRouter(db, publisherPool, evolutionClient, evolutionPrefix)
+	router := appHttp.SetupRouter(db, publisherPool, evolutionClient, evolutionPrefix, secullumSvc)
 
 	// Endpoint de verificação de integridade da infraestrutura (Conexão DB e Broker).
 	// Registrado aqui porque depende da conexão do banco e do broker.

@@ -1,11 +1,19 @@
-import { Activity, ChevronDown, ClipboardList, PlayCircle, RefreshCw } from 'lucide-react'
+import { Activity, CalendarSearch, ChevronDown, ClipboardList, PlayCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Button, EmptyState, ErrorNote, SeverityBadge, Skeleton, useToast } from '../components/ui'
+import { Button, EmptyState, ErrorNote, Input, SeverityBadge, Skeleton, useToast } from '../components/ui'
 import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
 import { formatDate, formatDateTime } from '../lib/format'
 import type { HealthResponse, Report } from '../lib/types'
+
+// Só datas já encerradas (antes de hoje) podem ser auditadas sob demanda — o backend
+// recusa hoje/futuro (ver TriggerRequest.resolveDate no handler de auditoria).
+function yesterday(): string {
+  const d = new Date()
+  d.setDate(d.getDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
 
 type Loadable<T> =
   | { phase: 'loading' }
@@ -18,6 +26,9 @@ export default function Painel() {
   const [reports, setReports] = useState<Loadable<Report[]>>({ phase: 'loading' })
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [triggering, setTriggering] = useState(false)
+  const [pickingDate, setPickingDate] = useState(false)
+  const [pickedDate, setPickedDate] = useState('')
+  const [triggeringDate, setTriggeringDate] = useState(false)
 
   const loadReports = useCallback(async () => {
     setReports({ phase: 'loading' })
@@ -51,6 +62,26 @@ export default function Painel() {
     }
   }
 
+  // Auditoria de um dia específico: não substitui a varredura diária automática, só
+  // permite conferir a situação de um dia passado sob demanda.
+  async function triggerAuditForDate() {
+    if (!pickedDate) return
+    setTriggeringDate(true)
+    try {
+      const result = await api.triggerAudit(tenant.id, pickedDate)
+      toast(
+        'success',
+        `Auditoria de ${formatDate(result.date)} enfileirada. Atualize a lista em instantes.`,
+      )
+      setPickingDate(false)
+      setPickedDate('')
+    } catch (error) {
+      toast('error', error instanceof ApiError ? error.message : 'Falha ao disparar a auditoria.')
+    } finally {
+      setTriggeringDate(false)
+    }
+  }
+
   const summary = useMemo(() => {
     if (reports.phase !== 'ready' || reports.data.length === 0) return null
     const latest = reports.data[0]
@@ -81,12 +112,44 @@ export default function Painel() {
         </div>
         <div className="flex items-center gap-2">
           <HealthChip health={health} />
+          <Button
+            variant="secondary"
+            onClick={() => setPickingDate((v) => !v)}
+            aria-expanded={pickingDate}
+          >
+            <CalendarSearch size={17} aria-hidden />
+            Auditar um dia
+          </Button>
           <Button onClick={triggerAudit} busy={triggering}>
             <PlayCircle size={17} aria-hidden />
             Auditar agora
           </Button>
         </div>
       </header>
+
+      {pickingDate && (
+        <div className="mt-4 flex flex-wrap items-end gap-2 rounded-card border border-brand/30 bg-brand-soft/40 p-4 animate-rise">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-ink">Auditar um dia específico</span>
+            <Input
+              type="date"
+              value={pickedDate}
+              max={yesterday()}
+              onChange={(e) => setPickedDate(e.target.value)}
+            />
+          </label>
+          <Button onClick={triggerAuditForDate} busy={triggeringDate} disabled={!pickedDate}>
+            Enfileirar
+          </Button>
+          <Button variant="ghost" onClick={() => setPickingDate(false)}>
+            Cancelar
+          </Button>
+          <p className="w-full text-xs text-ink-soft">
+            Não substitui a varredura diária automática — serve para conferir a situação de um dia já
+            encerrado sob demanda.
+          </p>
+        </div>
+      )}
 
       <section className="mt-8" aria-label="Relatórios de auditoria">
         <div className="mb-3 flex items-center justify-between">

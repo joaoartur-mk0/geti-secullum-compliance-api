@@ -2,7 +2,7 @@
 // relatórios que o backend já entrega. As inconsistências são chaveadas por
 // CollaboratorID = SecullumID (ver consumer.go), o mesmo `secullum_id` do colaborador.
 
-import type { AuditInconsistency, Report } from './types'
+import type { Report } from './types'
 
 export interface CollaboratorOccurrenceSummary {
   latestCount: number // ocorrências na varredura mais recente
@@ -45,35 +45,4 @@ export function summarizeByCollaborator(
     }
   }
   return map
-}
-
-export interface OccurrenceGroup {
-  date: string // dia auditado (YYYY-MM-DD)
-  dataGenerated: string // momento da geração do relatório
-  items: AuditInconsistency[]
-}
-
-export interface CollaboratorHistory {
-  groups: OccurrenceGroup[] // por varredura, do mais recente ao mais antigo
-  total: number
-  critical: number
-  lastDate: string | null // data da ocorrência mais recente
-}
-
-// collaboratorHistory monta a linha do tempo de ocorrências de um colaborador,
-// agrupada por varredura (relatório). Só entram varreduras em que ele teve ocorrência.
-export function collaboratorHistory(reports: Report[], secullumId: number): CollaboratorHistory {
-  const groups: OccurrenceGroup[] = []
-  let total = 0
-  let critical = 0
-
-  for (const report of reports) {
-    const items = (report.inconsistencies ?? []).filter((i) => i.CollaboratorID === secullumId)
-    if (items.length === 0) continue
-    groups.push({ date: report.date, dataGenerated: report.data_generated, items })
-    total += items.length
-    critical += items.filter((i) => i.Severity === 'CRITICO').length
-  }
-
-  return { groups, total, critical, lastDate: groups.length > 0 ? groups[0].date : null }
 }

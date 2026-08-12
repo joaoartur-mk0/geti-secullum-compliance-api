@@ -323,8 +323,9 @@ func TestProcessRules_SemCargaPrevistaViraInfracao(t *testing.T) {
 	if !ok {
 		t.Fatalf("esperava %q, veio %+v", TipoCargaNaoApurada, inc)
 	}
-	if got.Severity != domain.SeverityCritical {
-		t.Errorf("carga não apurada deveria ser CRITICO, veio %q", got.Severity)
+	// Cadastro incompleto/escala desatualizada é problema operacional, não infração.
+	if got.Severity != domain.SeverityOperational {
+		t.Errorf("carga não apurada deveria ser OPERACIONAL, veio %q", got.Severity)
 	}
 	// E a jornada inteira NÃO pode virar hora extra.
 	if _, ok := findByType(inc, TipoHoraExtra); ok {
@@ -372,8 +373,9 @@ func TestProcessRules_TrabalhoEmDiaDeFolga(t *testing.T) {
 	if !ok {
 		t.Fatalf("esperava %q, veio %+v", TipoTrabalhoEmFolga, inc)
 	}
-	if got.Severity != domain.SeverityCritical {
-		t.Errorf("trabalho em folga deveria ser CRITICO, veio %q", got.Severity)
+	// Nasce operacional: o caso comum é troca de escala não registrada na Secullum.
+	if got.Severity != domain.SeverityOperational {
+		t.Errorf("trabalho em folga deveria ser OPERACIONAL, veio %q", got.Severity)
 	}
 	// Não duplica como hora extra nem como carga não apurada.
 	if _, ok := findByType(inc, TipoHoraExtra); ok {

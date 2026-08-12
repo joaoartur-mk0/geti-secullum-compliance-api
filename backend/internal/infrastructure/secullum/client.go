@@ -65,6 +65,44 @@ type secullumPunchResponse struct {
 
 	Folga  bool `json:"Folga"`
 	Neutro bool `json:"Neutro"`
+
+	// EquipId* identificam o aparelho (relógio de ponto) em que cada marcação foi
+	// registrada. É o que liga a batida a uma filial. Vem nulo quando a marcação não
+	// passou por um relógio (batida pelo app/web, inclusão manual) — daí o fallback
+	// pelo nº de folha na resolução de filial.
+	EquipIdEntrada1 *int `json:"EquipIdEntrada1"`
+	EquipIdSaida1   *int `json:"EquipIdSaida1"`
+	EquipIdEntrada2 *int `json:"EquipIdEntrada2"`
+	EquipIdSaida2   *int `json:"EquipIdSaida2"`
+	EquipIdEntrada3 *int `json:"EquipIdEntrada3"`
+	EquipIdSaida3   *int `json:"EquipIdSaida3"`
+	EquipIdEntrada4 *int `json:"EquipIdEntrada4"`
+	EquipIdSaida4   *int `json:"EquipIdSaida4"`
+	EquipIdEntrada5 *int `json:"EquipIdEntrada5"`
+	EquipIdSaida5   *int `json:"EquipIdSaida5"`
+}
+
+// equipIDs devolve os aparelhos usados no dia, sem nulos e sem repetição, na ordem em que
+// aparecem. O primeiro é o mais relevante para a filial: é onde o expediente começou.
+func (r secullumPunchResponse) equipIDs() []int {
+	candidates := []*int{
+		r.EquipIdEntrada1, r.EquipIdSaida1,
+		r.EquipIdEntrada2, r.EquipIdSaida2,
+		r.EquipIdEntrada3, r.EquipIdSaida3,
+		r.EquipIdEntrada4, r.EquipIdSaida4,
+		r.EquipIdEntrada5, r.EquipIdSaida5,
+	}
+
+	var out []int
+	seen := make(map[int]bool, len(candidates))
+	for _, id := range candidates {
+		if id == nil || *id == 0 || seen[*id] {
+			continue
+		}
+		seen[*id] = true
+		out = append(out, *id)
+	}
+	return out
 }
 
 // marcacoes devolve os 5 pares de batidas reais, preservando as posições vazias (uma
@@ -98,7 +136,11 @@ type secullumFuncionarioResponse struct {
 	Nome    string `json:"Nome"`
 	Cpf     string `json:"Cpf"`
 	Celular string `json:"Celular"`
-	Horario struct {
+	// NumeroFolha é o número do funcionário na folha de pagamento. Vem como string na
+	// Secullum (pode ter zeros à esquerda) e é a chave usada para lotar o colaborador
+	// numa filial quando a batida não identifica o aparelho.
+	NumeroFolha string `json:"NumeroFolha"`
+	Horario     struct {
 		Numero int `json:"Numero"`
 	} `json:"Horario"`
 }
@@ -274,6 +316,7 @@ func (c *secullumClient) GetDailyPunches(tenant *domain.Tenant, date time.Time) 
 			Previstas:      raw.previstas(),
 			Folga:          raw.Folga,
 			Neutro:         raw.Neutro,
+			EquipIDs:       raw.equipIDs(),
 		})
 	}
 
@@ -312,6 +355,7 @@ func (c *secullumClient) GetCollaborators(tenant *domain.Tenant) ([]domain.Colla
 			Name:          raw.Nome,
 			Cpf:           raw.Cpf,
 			Celular:       raw.Celular,
+			NumeroFolha:   raw.NumeroFolha,
 			HorarioNumero: raw.Horario.Numero,
 		})
 	}

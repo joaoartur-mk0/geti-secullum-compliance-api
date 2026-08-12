@@ -7,6 +7,9 @@ type Collaborator struct {
 	Name       string `gorm:"type:varchar(255)" json:"name"`
 	Cpf        string `gorm:"type:varchar(20)" json:"cpf"`
 	Celular    string `gorm:"type:varchar(20)" json:"celular"`
+	// NumeroFolha vem da Secullum como string (pode ter zeros à esquerda). Indexado
+	// porque é chave de busca na resolução de filial.
+	NumeroFolha string `gorm:"type:varchar(40);index" json:"numero_folha"`
 
 	// Relacionamentos GORM
 	Schedules []CollaboratorSchedule `gorm:"foreignKey:CollaboratorID" json:"schedules,omitempty"`

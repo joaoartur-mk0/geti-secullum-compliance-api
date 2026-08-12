@@ -66,12 +66,13 @@ func (r *collaboratorRepository) upsert(tx *gorm.DB, collaborator *domain.Collab
 
 	if res.RowsAffected == 0 {
 		model := &models.Collaborator{
-			TenantID:   collaborator.TenantID,
-			SecullumID: collaborator.SecullumID,
-			Name:       collaborator.Name,
-			Cpf:        collaborator.Cpf,
-			Celular:    collaborator.Celular,
-			Schedules:  schedules,
+			TenantID:    collaborator.TenantID,
+			SecullumID:  collaborator.SecullumID,
+			Name:        collaborator.Name,
+			Cpf:         collaborator.Cpf,
+			Celular:     collaborator.Celular,
+			NumeroFolha: collaborator.NumeroFolha,
+			Schedules:   schedules,
 		}
 		if err := tx.Create(model).Error; err != nil {
 			return domain.NewInternal(op, "falha ao criar colaborador", err)
@@ -82,9 +83,10 @@ func (r *collaboratorRepository) upsert(tx *gorm.DB, collaborator *domain.Collab
 
 	// Atualiza os dados de identidade.
 	if err := tx.Model(&existing).Updates(map[string]interface{}{
-		"name":    collaborator.Name,
-		"cpf":     collaborator.Cpf,
-		"celular": collaborator.Celular,
+		"name":         collaborator.Name,
+		"cpf":          collaborator.Cpf,
+		"celular":      collaborator.Celular,
+		"numero_folha": collaborator.NumeroFolha,
 	}).Error; err != nil {
 		return domain.NewInternal(op, "falha ao atualizar colaborador", err)
 	}
@@ -152,12 +154,13 @@ func toModelSchedules(schedules []domain.CollaboratorSchedule) []models.Collabor
 
 func toDomainCollaborator(m *models.Collaborator) domain.Collaborator {
 	c := domain.Collaborator{
-		ID:         m.ID,
-		TenantID:   m.TenantID,
-		SecullumID: m.SecullumID,
-		Name:       m.Name,
-		Cpf:        m.Cpf,
-		Celular:    m.Celular,
+		ID:          m.ID,
+		TenantID:    m.TenantID,
+		SecullumID:  m.SecullumID,
+		Name:        m.Name,
+		Cpf:         m.Cpf,
+		Celular:     m.Celular,
+		NumeroFolha: m.NumeroFolha,
 	}
 	for _, s := range m.Schedules {
 		c.Schedules = append(c.Schedules, domain.CollaboratorSchedule{

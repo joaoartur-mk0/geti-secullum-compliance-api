@@ -21,6 +21,7 @@ type AuditConsumer struct {
 	secullumSvc    domain.SecullumService
 	reportRepo     domain.ReportRepository
 	auditorCore    *usecase.AuditorService
+	reconciler     *usecase.ReconcilerService
 	publisher      *ChannelPool
 	instancePrefix string // prefixo p/ derivar a instância de WhatsApp do tenant
 }
@@ -32,6 +33,7 @@ func NewAuditConsumer(
 	ss domain.SecullumService,
 	rr domain.ReportRepository,
 	ac *usecase.AuditorService,
+	rc *usecase.ReconcilerService,
 	publisher *ChannelPool,
 	instancePrefix string,
 ) *AuditConsumer {
@@ -42,6 +44,7 @@ func NewAuditConsumer(
 		secullumSvc:    ss,
 		reportRepo:     rr,
 		auditorCore:    ac,
+		reconciler:     rc,
 		publisher:      publisher,
 		instancePrefix: instancePrefix,
 	}
@@ -97,9 +100,13 @@ func (c *AuditConsumer) reject(msg amqp.Delivery, requeue bool, tenantID int, re
 }
 
 func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
-	// 1. Decodifica o JSON que veio do Handler HTTP
+	// 1. Decodifica o JSON que veio do Handler HTTP.
+	//
+	// `date` é opcional e serve para auditar um dia específico sob demanda. Sem ele —
+	// que é o caso da varredura diária automática — audita-se D-1, como sempre.
 	var payload struct {
-		TenantID int `json:"tenant_id"`
+		TenantID int    `json:"tenant_id"`
+		Date     string `json:"date"`
 	}
 	if err := json.Unmarshal(msg.Body, &payload); err != nil {
 		// Payload malformado nunca ficará válido em nova tentativa: descarta (requeue=false).
@@ -142,9 +149,10 @@ func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
 		return
 	}
 
-	// 4. Determina o dia de fechamento (D-1, o dia anterior já encerrado) e o dia
-	// anterior a ele (D-2), necessário apenas para a regra de interjornada.
-	diaAlvo := time.Now().AddDate(0, 0, -1)
+	// 4. Determina o dia auditado — o informado no evento (auditoria sob demanda de um dia
+	// específico) ou, na ausência dele, D-1: o fechamento diário automático de sempre. E o
+	// dia anterior a ele, necessário apenas para a regra de interjornada.
+	diaAlvo := resolveTargetDay(payload.Date, time.Now())
 	diaAnterior := diaAlvo.AddDate(0, 0, -1)
 
 	punchesAlvo, err := c.secullumSvc.GetDailyPunches(tenant, diaAlvo)
@@ -212,7 +220,18 @@ func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
 		inconsistencies = append(inconsistencies, collabInconsistencies...)
 	}
 
-	// 6. Salva o Relatório consolidado no Banco de Dados (data alvo = D-1).
+	// 6. Reconcilia as ocorrências do dia: é aqui que a auditoria deixa de empilhar listas
+	// e passa a mover estados. Auditar o mesmo dia de novo não duplica nada — atualiza o
+	// que mudou e resolve sozinho o que deixou de ser apurado.
+	resumo, err := c.reconcile(payload.TenantID, diaAlvo, inconsistencies)
+	if err != nil {
+		// Sem reconciliar, o estado do dia fica pela metade: devolve à fila para retry.
+		c.reject(msg, true, payload.TenantID, fmt.Sprintf("falha ao reconciliar ocorrências: %v", err))
+		return
+	}
+
+	// 7. Salva o Relatório consolidado no Banco de Dados (registro da execução da
+	// varredura, base do histórico e do gráfico de evolução do painel).
 	report := &domain.Report{
 		TenantID:        tenant.ID,
 		Date:            diaAlvo,
@@ -225,16 +244,17 @@ func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
 		return
 	}
 
-	log.Printf("[OK] Auditoria concluída! %d colaborador(es) avaliado(s), %d infração(ões) encontrada(s).\n",
-		len(collaborators), len(inconsistencies))
+	log.Printf("[OK] Auditoria de %s concluída! %d colaborador(es) avaliado(s), %d infração(ões) apurada(s) — %d nova(s), %d atualizada(s), %d reaberta(s), %d resolvida(s), %d inalterada(s).\n",
+		diaAlvo.Format("2006-01-02"), len(collaborators), len(inconsistencies),
+		len(resumo.Created), len(resumo.Updated), len(resumo.Reopened), len(resumo.Resolved), resumo.Unchanged)
 
-	// 7. Notifica os gestores (staffs) do tenant com o resumo do fechamento noturno,
+	// 8. Notifica os gestores (staffs) do tenant com o resumo do fechamento noturno,
 	// publicando na fila `notifications.whatsapp` (seção 5.4 da especificação). A
 	// entrega via Evolution API é responsabilidade do worker de notificações — este
 	// worker apenas enfileira, sem esperar a latência da API externa.
-	c.notifyStaffs(tenant, diaAlvo, inconsistencies)
+	c.notifyStaffs(tenant, diaAlvo, resumo)
 
-	// 8. Confirma (Ack) para o RabbitMQ apagar a mensagem da fila
+	// 9. Confirma (Ack) para o RabbitMQ apagar a mensagem da fila
 	if err := msg.Ack(false); err != nil {
 		// O relatório já foi salvo; o Ack falhou. A mensagem poderá ser reentregue e
 		// gerar um relatório duplicado — registrado aqui para rastreabilidade.
@@ -246,7 +266,7 @@ func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
 // auditoria de fechamento na fila `notifications.whatsapp`. Sem staffs cadastrados,
 // apenas registra o aviso — não é um erro (o tenant pode ainda não ter configurado
 // um responsável), então a auditoria não é reprocessada por isso.
-func (c *AuditConsumer) notifyStaffs(tenant *domain.Tenant, dia time.Time, inconsistencies []domain.AuditInconsistency) {
+func (c *AuditConsumer) notifyStaffs(tenant *domain.Tenant, dia time.Time, resumo usecase.ReconcileResult) {
 	if c.publisher == nil {
 		return
 	}
@@ -255,7 +275,7 @@ func (c *AuditConsumer) notifyStaffs(tenant *domain.Tenant, dia time.Time, incon
 		return
 	}
 
-	message := buildClosingSummaryMessage(tenant.Name, dia, inconsistencies)
+	message := buildClosingSummaryMessage(tenant.Name, dia, resumo)
 	instance := domain.WhatsAppInstanceName(c.instancePrefix, tenant.ID)
 
 	for _, staff := range tenant.Staffs {
@@ -277,32 +297,82 @@ func (c *AuditConsumer) notifyStaffs(tenant *domain.Tenant, dia time.Time, incon
 	}
 }
 
-// buildClosingSummaryMessage monta o texto do resumo consolidado noturno enviado
-// aos gestores, no mesmo tom do exemplo documentado na especificação (seção 5.4).
-func buildClosingSummaryMessage(tenantName string, dia time.Time, inconsistencies []domain.AuditInconsistency) string {
-	if len(inconsistencies) == 0 {
+// buildClosingSummaryMessage monta o texto enviado aos gestores no fechamento.
+//
+// A mensagem reporta o que MUDOU nesta varredura, não a lista inteira de novo. Com a
+// máquina de estados, reenviar todas as ocorrências a cada auditoria repetiria dezenas de
+// linhas já conhecidas e treinaria o gestor a ignorar o alerta; o que ele precisa saber é
+// o que apareceu, o que piorou, o que voltou e o que se resolveu.
+func buildClosingSummaryMessage(tenantName string, dia time.Time, resumo usecase.ReconcileResult) string {
+	header := fmt.Sprintf("🏢 *Empresa:* %s\n📅 *Data:* %s\n", tenantName, dia.Format("02/01/2006"))
+
+	if !resumo.Changed() {
+		if resumo.Unchanged == 0 && resumo.Ignored == 0 {
+			return "✅ *Fechamento de Jornada*\n\n" + header + "\nNenhuma inconsistência encontrada."
+		}
 		return fmt.Sprintf(
-			"✅ *Fechamento de Jornada*\n\n🏢 *Empresa:* %s\n📅 *Data:* %s\n\nNenhuma inconsistência encontrada.",
-			tenantName, dia.Format("02/01/2006"),
+			"✅ *Fechamento de Jornada*\n\n%s\nNenhuma novidade: %d ocorrência(s) já conhecida(s) seguem em aberto.",
+			header, resumo.Unchanged,
 		)
 	}
 
-	var criticas, alertas int
-	for _, inc := range inconsistencies {
-		if inc.Severity == domain.SeverityCritical {
-			criticas++
-		} else {
-			alertas++
+	var b strings.Builder
+	fmt.Fprintf(&b, "⚠️ *Fechamento de Jornada*\n\n%s", header)
+	fmt.Fprintf(&b, "🆕 *Novas:* %d | 🔁 *Atualizadas:* %d | ↩️ *Reabertas:* %d | ✅ *Resolvidas:* %d\n",
+		len(resumo.Created), len(resumo.Updated), len(resumo.Reopened), len(resumo.Resolved))
+
+	writeGroup(&b, "🆕 *Novas ocorrências*", resumo.Created)
+	writeGroup(&b, "🔁 *Ocorrências que mudaram*", resumo.Updated)
+	writeGroup(&b, "↩️ *Voltaram a ocorrer*", resumo.Reopened)
+
+	if len(resumo.Resolved) > 0 {
+		fmt.Fprintf(&b, "\n✅ *Resolvidas automaticamente*\n")
+		for _, occ := range resumo.Resolved {
+			fmt.Fprintf(&b, "• %s — %s\n", occ.CollaboratorName, occ.Type)
 		}
 	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "⚠️ *Fechamento de Jornada*\n\n🏢 *Empresa:* %s\n📅 *Data:* %s\n", tenantName, dia.Format("02/01/2006"))
-	fmt.Fprintf(&b, "🔴 *Críticas:* %d | 🟡 *Alertas:* %d\n\n*Ocorrências:*\n", criticas, alertas)
-	for _, inc := range inconsistencies {
-		fmt.Fprintf(&b, "• %s (%s) — %s: %s\n", inc.CollaboratorName, inc.Severity, inc.Type, inc.Description)
+	if resumo.Unchanged > 0 {
+		fmt.Fprintf(&b, "\n_%d ocorrência(s) já conhecida(s) seguem em aberto, sem mudança._\n", resumo.Unchanged)
 	}
+
 	return b.String()
+}
+
+// writeGroup imprime um bloco de ocorrências com a descrição completa — são as que exigem
+// leitura, ao contrário das resolvidas, que só precisam ser contadas.
+func writeGroup(b *strings.Builder, title string, occurrences []domain.Occurrence) {
+	if len(occurrences) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n%s\n", title)
+	for _, occ := range occurrences {
+		fmt.Fprintf(b, "• %s (%s) — %s: %s\n", occ.CollaboratorName, occ.Severity, occ.Type, occ.Description)
+	}
+}
+
+// resolveTargetDay devolve o dia a auditar: o informado no evento (auditoria sob demanda)
+// ou D-1 quando ausente/ilegível — o fechamento diário automático, que nunca deve deixar
+// de rodar por causa de um campo malformado.
+func resolveTargetDay(raw string, now time.Time) time.Time {
+	if raw == "" {
+		return now.AddDate(0, 0, -1)
+	}
+	day, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		log.Printf("[Aviso Auditoria] data %q inválida no evento; auditando D-1: %v", raw, err)
+		return now.AddDate(0, 0, -1)
+	}
+	return day
+}
+
+// reconcile aplica a máquina de estados ao dia auditado. O reconciliador é opcional na
+// construção do worker (os testes montam o consumer sem ele); sem reconciliador, a
+// auditoria segue gravando o relatório como antes.
+func (c *AuditConsumer) reconcile(tenantID int, dia time.Time, inconsistencies []domain.AuditInconsistency) (usecase.ReconcileResult, error) {
+	if c.reconciler == nil {
+		return usecase.ReconcileResult{}, nil
+	}
+	return c.reconciler.Reconcile(tenantID, dia, inconsistencies, time.Now())
 }
 
 // indexPunchesByCollaborator agrupa as batidas por id de colaborador (Secullum) para
