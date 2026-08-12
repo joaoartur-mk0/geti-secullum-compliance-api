@@ -18,6 +18,7 @@ import {
   CategoryBadge,
   EmptyState,
   ErrorNote,
+  Input,
   Select,
   SeverityBadge,
   Skeleton,
@@ -26,7 +27,7 @@ import {
 import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
 import { CATEGORY_ORDER } from '../lib/categories'
-import { formatDate, formatDateTime } from '../lib/format'
+import { formatDate, formatDateTime, yesterday } from '../lib/format'
 import type {
   AuditInconsistency,
   Branch,
@@ -104,10 +105,14 @@ export default function Indicadores() {
   // Total de colaboradores sincronizados (GET /collaborators). Secundário: uma falha aqui
   // não derruba os indicadores — só oculta o painel de equipe. null = desconhecido/erro.
   const [syncedTotal, setSyncedTotal] = useState<number | null>(null)
+  // Dia selecionado para inspeção (YYYY-MM-DD). null = padrão = a varredura mais recente
+  // (D-1). Reseta para o padrão a cada troca de tenant/atualização — ver `load`.
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setReports({ phase: 'loading' })
     setSyncedTotal(null)
+    setSelectedDate(null)
     // Colaboradores em paralelo, sem bloquear nem derrubar os relatórios.
     api
       .listCollaborators(tenant.id)
@@ -128,6 +133,24 @@ export default function Indicadores() {
   }, [load])
 
   const latest = reports.phase === 'ready' && reports.data.length > 0 ? reports.data[0] : null
+  const latestDay = latest?.date.slice(0, 10) ?? ''
+  // O dia efetivamente em exibição: o escolhido, ou o mais recente por padrão.
+  const effectiveDay = selectedDate ?? latestDay
+
+  // IMPORTANTE: o usuário pode escolher QUALQUER dia, não só um que já tenha varredura —
+  // é isso que corrige o seletor "preso" às datas existentes. Sem correspondência,
+  // `selectedReport` fica null e a tela mostra um estado vazio explícito em vez de cair
+  // silenciosamente na varredura mais recente (o que escondia o fato de o dia não ter
+  // sido auditado).
+  const selectedReport =
+    reports.phase === 'ready' && effectiveDay
+      ? (reports.data.find((r) => r.date.slice(0, 10) === effectiveDay) ?? null)
+      : null
+
+  function selectDate(date: string) {
+    const day = date.slice(0, 10)
+    setSelectedDate(day === latestDay ? null : day)
+  }
 
   return (
     <div className="animate-rise">
@@ -135,24 +158,43 @@ export default function Indicadores() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Indicadores</h1>
           <p className="mt-1 text-sm text-ink-soft">
-            {latest ? (
+            {reports.phase !== 'ready' || reports.data.length === 0 ? (
+              'Visão gerencial das varreduras de compliance da sua equipe.'
+            ) : selectedReport ? (
               <>
-                Varredura de <strong className="font-semibold text-ink">{formatDate(latest.date)}</strong>
-                {' · '}gerada {formatDateTime(latest.data_generated)}
+                Varredura de <strong className="font-semibold text-ink">{formatDate(selectedReport.date)}</strong>
+                {' · '}gerada {formatDateTime(selectedReport.data_generated)}
+                {selectedDate && selectedReport.id !== latest?.id && (
+                  <span className="ml-1 text-ink-faint">(consultando o histórico)</span>
+                )}
               </>
             ) : (
-              'Visão gerencial das varreduras de compliance da sua equipe.'
+              <>
+                Nenhuma varredura registrada para{' '}
+                <strong className="font-semibold text-ink">{formatDate(effectiveDay)}</strong>.
+              </>
             )}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={load}
-          className="flex min-h-11 items-center gap-1.5 rounded-field px-2.5 text-sm font-medium text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink"
-        >
-          <RefreshCw size={15} aria-hidden />
-          Atualizar
-        </button>
+        <div className="flex items-center gap-2">
+          {reports.phase === 'ready' && reports.data.length > 0 && (
+            <Input
+              type="date"
+              aria-label="Selecionar dia auditado"
+              value={effectiveDay}
+              max={yesterday()}
+              onChange={(e) => selectDate(e.target.value)}
+            />
+          )}
+          <button
+            type="button"
+            onClick={load}
+            className="flex min-h-11 items-center gap-1.5 rounded-field px-2.5 text-sm font-medium text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink"
+          >
+            <RefreshCw size={15} aria-hidden />
+            Atualizar
+          </button>
+        </div>
       </header>
 
       {reports.phase === 'loading' && (
@@ -173,7 +215,7 @@ export default function Indicadores() {
         </div>
       )}
 
-      {reports.phase === 'ready' && !latest && (
+      {reports.phase === 'ready' && reports.data.length === 0 && (
         <div className="mt-8">
           <EmptyState
             icon={<BarChart3 size={32} strokeWidth={1.5} />}
@@ -191,8 +233,14 @@ export default function Indicadores() {
         </div>
       )}
 
-      {reports.phase === 'ready' && latest && (
-        <Dashboard reports={reports.data} latest={latest} syncedTotal={syncedTotal} />
+      {reports.phase === 'ready' && reports.data.length > 0 && (
+        <Dashboard
+          reports={reports.data}
+          selectedReport={selectedReport}
+          selectedDay={effectiveDay}
+          syncedTotal={syncedTotal}
+          onSelectDate={selectDate}
+        />
       )}
     </div>
   )
@@ -200,17 +248,22 @@ export default function Indicadores() {
 
 function Dashboard({
   reports,
-  latest,
+  selectedReport,
+  selectedDay,
   syncedTotal,
+  onSelectDate,
 }: {
   reports: Report[]
-  latest: Report
+  selectedReport: Report | null
+  selectedDay: string
   syncedTotal: number | null
+  onSelectDate: (date: string) => void
 }) {
-  const d = useMemo(() => derive(latest), [latest])
-  const m: ReportMetrics | null = latest.metrics ?? null
+  const d = useMemo(() => (selectedReport ? derive(selectedReport) : null), [selectedReport])
+  const m: ReportMetrics | null = selectedReport?.metrics ?? null
 
   // Série cronológica (o backend devolve do mais recente ao mais antigo) para a tendência.
+  // Não depende do dia selecionado — mostra a evolução do histórico inteiro.
   const series = useMemo(
     () =>
       reports
@@ -225,14 +278,43 @@ function Dashboard({
 
   return (
     <div className="mt-8 flex flex-col gap-6">
-      <CollaboratorsSummary syncedTotal={syncedTotal} withAlerts={d.affectedCollaborators} />
-      <KpiRow derived={d} metrics={m} reportCount={reports.length} />
+      {d ? (
+        <>
+          <CollaboratorsSummary syncedTotal={syncedTotal} withAlerts={d.affectedCollaborators} />
+          <KpiRow derived={d} metrics={m} reportCount={reports.length} />
+        </>
+      ) : (
+        <NoReportForDay day={selectedDay} />
+      )}
+
+      {/* Estas duas seções são o estado ATUAL (independem do dia selecionado acima). */}
       <OccurrencesByCategory />
       <WarningsSummary />
-      <DistributionChart byType={d.byType} total={d.total} />
-      <TrendChart series={series} />
-      <TopCollaborators inconsistencies={latest.inconsistencies ?? []} />
+
+      {d && <DistributionChart byType={d.byType} total={d.total} />}
+      <TrendChart series={series} selectedDate={selectedReport?.date ?? ''} onSelect={onSelectDate} />
+      {d && <TopCollaborators inconsistencies={selectedReport?.inconsistencies ?? []} />}
     </div>
+  )
+}
+
+// ---------- Estado vazio: dia escolhido sem varredura ----------
+
+function NoReportForDay({ day }: { day: string }) {
+  return (
+    <section className="rounded-card border border-dashed border-line px-6 py-10 text-center">
+      <p className="font-semibold text-ink">Nenhuma varredura para {formatDate(day)}</p>
+      <p className="mx-auto mt-1 max-w-md text-sm text-ink-soft">
+        Esse dia ainda não foi auditado. Dispare uma auditoria específica no Painel, ou escolha outro
+        dia acima ou no gráfico de evolução mais abaixo.
+      </p>
+      <Link
+        to="/"
+        className="mt-3 inline-block text-sm font-semibold text-brand underline underline-offset-2 hover:text-brand-strong"
+      >
+        Ir para o Painel
+      </Link>
+    </section>
   )
 }
 
@@ -300,7 +382,10 @@ function OccurrencesByCategory() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Layers size={16} className="text-ink-faint" aria-hidden />
-          <h2 className="text-sm font-semibold text-ink">Em aberto por categoria</h2>
+          <div>
+            <h2 className="text-sm font-semibold text-ink">Em aberto por categoria</h2>
+            <p className="text-xs text-ink-faint">Situação atual — independe do dia selecionado acima</p>
+          </div>
         </div>
         {branches.length > 0 && (
           <Select
@@ -686,7 +771,15 @@ function DistributionChart({
 
 // ---------- Gráfico: tendência ao longo das varreduras ----------
 
-function TrendChart({ series }: { series: { date: string; total: number; critical: number; alert: number }[] }) {
+function TrendChart({
+  series,
+  selectedDate,
+  onSelect,
+}: {
+  series: { date: string; total: number; critical: number; alert: number }[]
+  selectedDate: string
+  onSelect: (date: string) => void
+}) {
   const max = series.reduce((m, s) => Math.max(m, s.total), 0)
 
   return (
@@ -711,18 +804,25 @@ function TrendChart({ series }: { series: { date: string; total: number; critica
           {series.map((s) => {
             const heightPct = max > 0 ? (s.total / max) * 100 : 0
             const critShare = s.total > 0 ? (s.critical / s.total) * 100 : 0
+            const isSelected = s.date === selectedDate
             return (
-              <div
+              <button
                 key={s.date}
-                className="flex min-w-0 flex-1 flex-col items-center gap-1.5"
+                type="button"
+                onClick={() => onSelect(s.date)}
+                aria-pressed={isSelected}
+                aria-label={`Ver indicadores de ${formatDate(s.date)}`}
                 title={`${formatDate(s.date)} — ${s.total} inconsistência(s): ${s.critical} crítica(s), ${s.alert} alerta(s)`}
+                className="flex min-w-0 flex-1 flex-col items-center gap-1.5 rounded-field transition-colors duration-150 hover:bg-panel"
               >
                 <div className="flex w-full flex-1 items-end justify-center">
                   {s.total === 0 ? (
-                    <div className="h-0.5 w-full rounded-full bg-line" aria-hidden />
+                    <div className={`h-0.5 w-full rounded-full ${isSelected ? 'bg-brand' : 'bg-line'}`} aria-hidden />
                   ) : (
                     <div
-                      className="flex w-full max-w-8 flex-col overflow-hidden rounded-t-sm transition-[height] duration-500 ease-out"
+                      className={`flex w-full max-w-8 flex-col overflow-hidden rounded-t-sm transition-[height] duration-500 ease-out ${
+                        isSelected ? 'ring-2 ring-brand ring-offset-1' : ''
+                      }`}
                       style={{ height: `${Math.max(heightPct, 4)}%` }}
                     >
                       {s.critical > 0 && <div className="w-full bg-critico" style={{ height: `${critShare}%` }} />}
@@ -730,10 +830,14 @@ function TrendChart({ series }: { series: { date: string; total: number; critica
                     </div>
                   )}
                 </div>
-                <span className="w-full truncate text-center text-[10px] tabular-nums text-ink-faint">
+                <span
+                  className={`w-full truncate text-center text-[10px] tabular-nums ${
+                    isSelected ? 'font-semibold text-brand' : 'text-ink-faint'
+                  }`}
+                >
                   {shortDate(s.date)}
                 </span>
-              </div>
+              </button>
             )
           })}
         </div>

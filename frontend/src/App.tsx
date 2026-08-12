@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { ToastProvider } from './components/ui'
 import AppShell from './layouts/AppShell'
+import Auditorias from './pages/Auditorias'
 import Avisos from './pages/Avisos'
 import ColaboradorHistorico from './pages/ColaboradorHistorico'
 import Colaboradores from './pages/Colaboradores'
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route element={<AppShell />}>
             <Route index element={<Painel />} />
+            <Route path="auditorias" element={<Auditorias />} />
             <Route path="indicadores" element={<Indicadores />} />
             <Route path="colaboradores" element={<Colaboradores />} />
             <Route path="colaboradores/:secullumId" element={<ColaboradorHistorico />} />

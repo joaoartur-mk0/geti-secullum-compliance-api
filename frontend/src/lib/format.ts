@@ -44,3 +44,12 @@ export function isValidPhone(input: string): boolean {
   const digits = normalizePhone(input)
   return digits.length === 12 || digits.length === 13
 }
+
+// Só dias já encerrados (antes de hoje) podem ser auditados sob demanda — o backend
+// recusa hoje/futuro (ver TriggerRequest.resolveDate no handler de auditoria). Usado como
+// limite máximo em qualquer seletor de data ligado a auditoria.
+export function yesterday(): string {
+  const d = new Date()
+  d.setDate(d.getDate() - 1)
+  return d.toISOString().slice(0, 10)
+}

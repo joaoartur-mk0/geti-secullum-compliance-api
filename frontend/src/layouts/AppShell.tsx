@@ -3,6 +3,7 @@ import {
   Bell,
   Building2,
   Contact,
+  History,
   LandPlot,
   LayoutDashboard,
   LogOut,
@@ -40,6 +41,7 @@ export function useTenant(): TenantContextValue {
 
 const navItems = [
   { to: '/', label: 'Painel', icon: LayoutDashboard, end: true, superAdminOnly: false },
+  { to: '/auditorias', label: 'Auditorias', icon: History, end: false, superAdminOnly: false },
   { to: '/indicadores', label: 'Indicadores', icon: BarChart3, end: false, superAdminOnly: false },
   { to: '/colaboradores', label: 'Colaboradores', icon: Contact, end: false, superAdminOnly: false },
   { to: '/filiais', label: 'Filiais', icon: LandPlot, end: false, superAdminOnly: false },

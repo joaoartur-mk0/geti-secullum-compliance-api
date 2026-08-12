@@ -1,19 +1,13 @@
-import { Activity, CalendarSearch, ChevronDown, ClipboardList, PlayCircle, RefreshCw } from 'lucide-react'
+import { Activity, CalendarSearch, ClipboardList, PlayCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Button, EmptyState, ErrorNote, Input, SeverityBadge, Skeleton, useToast } from '../components/ui'
+import ReportRow from '../components/ReportRow'
+import { Button, EmptyState, ErrorNote, Input, Skeleton, useToast } from '../components/ui'
 import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
-import { formatDate, formatDateTime } from '../lib/format'
+import { formatDate, yesterday } from '../lib/format'
+import { dedupeByDay } from '../lib/reports'
 import type { HealthResponse, Report } from '../lib/types'
-
-// Só datas já encerradas (antes de hoje) podem ser auditadas sob demanda — o backend
-// recusa hoje/futuro (ver TriggerRequest.resolveDate no handler de auditoria).
-function yesterday(): string {
-  const d = new Date()
-  d.setDate(d.getDate() - 1)
-  return d.toISOString().slice(0, 10)
-}
 
 type Loadable<T> =
   | { phase: 'loading' }
@@ -89,6 +83,13 @@ export default function Painel() {
     return { latest, criticos }
   }, [reports])
 
+  // Só a varredura mais recente de cada dia — o log completo (com reauditorias) fica na
+  // aba Auditorias.
+  const dailyReports = useMemo(
+    () => (reports.phase === 'ready' ? dedupeByDay(reports.data) : []),
+    [reports],
+  )
+
   return (
     <div className="animate-rise">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -151,9 +152,17 @@ export default function Painel() {
         </div>
       )}
 
-      <section className="mt-8" aria-label="Relatórios de auditoria">
+      <section className="mt-8" aria-label="Situação por dia">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-ink-soft">Relatórios recentes</h2>
+          <div>
+            <h2 className="text-sm font-semibold text-ink-soft">Situação por dia</h2>
+            <p className="text-xs text-ink-faint">
+              Uma linha por dia, sempre a varredura mais recente.{' '}
+              <Link to="/auditorias" className="font-medium text-brand underline underline-offset-2 hover:text-brand-strong">
+                Ver histórico completo
+              </Link>
+            </p>
+          </div>
           <button
             type="button"
             onClick={loadReports}
@@ -174,7 +183,7 @@ export default function Painel() {
 
         {reports.phase === 'error' && <ErrorNote message={reports.message} onRetry={loadReports} />}
 
-        {reports.phase === 'ready' && reports.data.length === 0 && (
+        {reports.phase === 'ready' && dailyReports.length === 0 && (
           <EmptyState
             icon={<ClipboardList size={32} strokeWidth={1.5} />}
             title="Nenhum relatório ainda"
@@ -187,9 +196,9 @@ export default function Painel() {
           />
         )}
 
-        {reports.phase === 'ready' && reports.data.length > 0 && (
+        {reports.phase === 'ready' && dailyReports.length > 0 && (
           <ul className="flex flex-col gap-2">
-            {reports.data.map((report) => (
+            {dailyReports.map((report) => (
               <ReportRow key={report.id} report={report} />
             ))}
           </ul>
@@ -211,78 +220,5 @@ function HealthChip({ health }: { health: HealthResponse | null }) {
       <Activity size={15} className={up ? 'animate-pulse-dot' : undefined} aria-hidden />
       {up ? 'Serviço ativo' : 'Fora do ar'}
     </span>
-  )
-}
-
-function ReportRow({ report }: { report: Report }) {
-  const [open, setOpen] = useState(false)
-  const inconsistencies = report.inconsistencies ?? []
-  const criticos = inconsistencies.filter((i) => i.Severity === 'CRITICO').length
-  const alertas = inconsistencies.length - criticos
-  const clean = report.total === 0
-
-  return (
-    <li className="rounded-card border border-line bg-bg shadow-card">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 rounded-card px-4 py-3.5 text-left transition-colors duration-150 hover:bg-panel"
-      >
-        <div className="min-w-32">
-          <p className="font-semibold">{formatDate(report.date)}</p>
-          <p className="text-xs text-ink-faint">gerado {formatDateTime(report.data_generated)}</p>
-        </div>
-        <div className="flex flex-1 flex-wrap items-center gap-2 text-sm">
-          {clean ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-ok-bg px-2.5 py-1 text-xs font-semibold text-ok">
-              Sem inconsistências
-            </span>
-          ) : (
-            <>
-              {criticos > 0 && (
-                <span className="inline-flex items-center rounded-full bg-critico-bg px-2.5 py-1 text-xs font-semibold text-critico">
-                  {criticos} crítica{criticos > 1 ? 's' : ''}
-                </span>
-              )}
-              {alertas > 0 && (
-                <span className="inline-flex items-center rounded-full bg-alerta-bg px-2.5 py-1 text-xs font-semibold text-alerta">
-                  {alertas} alerta{alertas > 1 ? 's' : ''}
-                </span>
-              )}
-            </>
-          )}
-        </div>
-        <ChevronDown
-          size={18}
-          aria-hidden
-          className={`shrink-0 text-ink-faint transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-        />
-      </button>
-
-      {open && (
-        <div className="border-t border-line px-4 py-3">
-          {inconsistencies.length === 0 ? (
-            <p className="py-2 text-sm text-ink-soft">
-              Todas as batidas do dia estavam em conformidade com as regras ativas.
-            </p>
-          ) : (
-            <ul className="divide-y divide-line">
-              {inconsistencies.map((item, index) => (
-                <li key={index} className="flex flex-wrap items-start gap-x-4 gap-y-1 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium">{item.CollaboratorName}</p>
-                    <p className="mt-0.5 text-sm text-ink-soft">
-                      {item.Type} — {item.Description}
-                    </p>
-                  </div>
-                  <SeverityBadge severity={item.Severity} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </li>
   )
 }

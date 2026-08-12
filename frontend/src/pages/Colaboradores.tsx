@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { EmptyState, ErrorNote, Input, SeverityBadge, Skeleton } from '../components/ui'
 import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
-import { summarizeByCollaborator, type CollaboratorOccurrenceSummary } from '../lib/occurrences'
+import { summarizeOccurrencesByCollaborator, type CollaboratorOccurrenceSummary } from '../lib/occurrences'
 import type { Collaborator } from '../lib/types'
 
 type Loadable<T> =
@@ -13,11 +13,15 @@ type Loadable<T> =
   | { phase: 'ready'; data: T }
 
 const EMPTY_SUMMARY: CollaboratorOccurrenceSummary = {
-  latestCount: 0,
-  latestCritical: 0,
+  openCount: 0,
+  openCritical: 0,
   totalCount: 0,
-  reportsWithOccurrence: 0,
 }
+
+// Todos os estados: o `totalCount` do histórico precisa contar mesmo o que já foi
+// resolvido, e o `openCount` (aberta/atualizada) é derivado da mesma lista — uma chamada
+// só, em vez de duas.
+const ALL_STATES = ['aberta', 'atualizada', 'resolvida_automatica', 'resolvida_manual'] as const
 
 export default function Colaboradores() {
   const { tenant } = useTenant()
@@ -28,11 +32,11 @@ export default function Colaboradores() {
 
   const load = useCallback(async () => {
     setCollabs({ phase: 'loading' })
-    // Ocorrências são derivadas dos relatórios (secundário): se falhar, a lista ainda
-    // aparece, só sem o status de ocorrência.
+    // Ocorrências são secundárias: se falhar, a lista de colaboradores ainda aparece, só
+    // sem o status de ocorrência.
     api
-      .listReports(tenant.id)
-      .then((reports) => setSummaries(summarizeByCollaborator(reports)))
+      .listOccurrences(tenant.id, { state: [...ALL_STATES] })
+      .then(({ occurrences }) => setSummaries(summarizeOccurrencesByCollaborator(occurrences)))
       .catch(() => setSummaries(new Map()))
     try {
       const { collaborators } = await api.listCollaborators(tenant.id)
@@ -55,7 +59,7 @@ export default function Colaboradores() {
     return collabs.data
       .map((c) => ({ collaborator: c, summary: summaries.get(c.secullum_id) ?? EMPTY_SUMMARY }))
       .filter(({ collaborator, summary }) => {
-        if (onlyWithOccurrence && summary.totalCount === 0) return false
+        if (onlyWithOccurrence && summary.openCount === 0) return false
         if (!q) return true
         return (
           collaborator.name.toLowerCase().includes(q) || String(collaborator.secullum_id).includes(q)
@@ -65,8 +69,8 @@ export default function Colaboradores() {
   }, [collabs, summaries, query, onlyWithOccurrence])
 
   const total = collabs.phase === 'ready' ? collabs.data.length : 0
-  const withOccurrence = useMemo(
-    () => [...summaries.values()].filter((s) => s.totalCount > 0).length,
+  const withOpenOccurrence = useMemo(
+    () => [...summaries.values()].filter((s) => s.openCount > 0).length,
     [summaries],
   )
 
@@ -77,7 +81,7 @@ export default function Colaboradores() {
           <h1 className="text-2xl font-semibold tracking-tight">Colaboradores</h1>
           <p className="mt-1 text-sm text-ink-soft">
             {collabs.phase === 'ready'
-              ? `${total} sincronizado${total === 1 ? '' : 's'}${withOccurrence > 0 ? ` · ${withOccurrence} com ocorrência no período` : ''}`
+              ? `${total} sincronizado${total === 1 ? '' : 's'}${withOpenOccurrence > 0 ? ` · ${withOpenOccurrence} com ocorrência em aberto` : ''}`
               : 'Funcionários sincronizados da Secullum, sob auditoria.'}
           </p>
         </div>
@@ -148,7 +152,7 @@ export default function Colaboradores() {
                 onChange={(e) => setOnlyWithOccurrence(e.target.checked)}
                 className="h-4 w-4 accent-brand"
               />
-              Só com ocorrência
+              Só com ocorrência em aberto
             </label>
           </div>
 
@@ -189,17 +193,16 @@ function CollaboratorRow({
             {summary.totalCount > 0 && (
               <span className="text-ink-soft">
                 {' · '}
-                {summary.totalCount} no histórico ({summary.reportsWithOccurrence} varredura
-                {summary.reportsWithOccurrence === 1 ? '' : 's'})
+                {summary.totalCount} ocorrência{summary.totalCount === 1 ? '' : 's'} no histórico
               </span>
             )}
           </p>
         </div>
 
-        {summary.latestCount > 0 ? (
+        {summary.openCount > 0 ? (
           <span className="flex items-center gap-2">
-            <span className="text-sm tabular-nums text-ink-soft">{summary.latestCount}</span>
-            <SeverityBadge severity={summary.latestCritical > 0 ? 'CRITICO' : 'ALERTA'} />
+            <span className="text-sm tabular-nums text-ink-soft">{summary.openCount}</span>
+            <SeverityBadge severity={summary.openCritical > 0 ? 'CRITICO' : 'ALERTA'} />
           </span>
         ) : (
           <span className="inline-flex items-center rounded-full bg-ok-bg px-2.5 py-1 text-xs font-semibold text-ok">
