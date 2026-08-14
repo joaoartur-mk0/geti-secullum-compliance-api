@@ -126,7 +126,10 @@ func (r *userRepository) Delete(id uint) error {
 	}
 
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Delete(&models.User{}, id).Error; err != nil {
+		if err := tx.Where("user_id = ?", id).Delete(&models.UserTenant{}).Error; err != nil {
+			return domain.NewInternal(op, "failed to remove user tenant links", err)
+		}
+		if err := tx.Unscoped().Delete(&models.User{}, id).Error; err != nil {
 			return domain.NewInternal(op, "failed to delete user", err)
 		}
 		return nil
