@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ToastProvider } from './components/ui'
 import AppShell from './layouts/AppShell'
 import Auditorias from './pages/Auditorias'
@@ -11,7 +11,6 @@ import Gestores from './pages/Gestores'
 import Indicadores from './pages/Indicadores'
 import Login from './pages/Login'
 import Moderacao from './pages/Moderacao'
-import Painel from './pages/Painel'
 import WhatsApp from './pages/WhatsApp'
 
 export default function App() {
@@ -21,7 +20,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route element={<AppShell />}>
-            <Route index element={<Painel />} />
+            <Route index element={<Navigate to="/indicadores" replace />} />
             <Route path="auditorias" element={<Auditorias />} />
             <Route path="indicadores" element={<Indicadores />} />
             <Route path="colaboradores" element={<Colaboradores />} />
