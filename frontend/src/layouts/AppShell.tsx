@@ -6,10 +6,12 @@ import {
   History,
   LandPlot,
   LogOut,
+  Menu,
   MessageCircle,
   ShieldAlert,
   ShieldCheck,
   Users,
+  X,
 } from 'lucide-react'
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { NavLink, Navigate, Outlet, useNavigate } from 'react-router-dom'
@@ -62,6 +64,7 @@ export default function AppShell() {
   const admin = isSuperAdmin()
   const items = navItems.filter((item) => !item.superAdminOnly || admin)
   const [state, setState] = useState<TenantState>({ phase: 'loading' })
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   const loadTenant = useCallback(async () => {
     setState({ phase: 'loading' })
@@ -97,6 +100,20 @@ export default function AppShell() {
     if (session) void loadTenant()
   }, [session != null, loadTenant]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Trava o scroll de fundo e fecha no Esc enquanto o menu mobile está aberto.
+  useEffect(() => {
+    if (!mobileNavOpen) return
+    document.body.style.overflow = 'hidden'
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileNavOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = ''
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [mobileNavOpen])
+
   if (!session) return <Navigate to="/login" replace />
 
   function logout() {
@@ -106,36 +123,60 @@ export default function AppShell() {
 
   return (
     <div className="min-h-dvh bg-bg md:flex">
-      {/* Navegação desktop */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col bg-side text-side-ink md:flex">
+      {/* Backdrop do menu mobile */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-ink/50 md:hidden"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Navegação: drawer no mobile (abre por cima do conteúdo), fixa no desktop */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-side text-side-ink transition-transform duration-200 ease-out md:z-30 md:w-60 md:translate-x-0 ${
+          mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
         <div className="flex items-center gap-2.5 px-5 pt-6 pb-8">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-side-raise">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-side-raise">
             <ShieldCheck size={20} className="text-brand-ring" aria-hidden />
           </span>
-          <div className="leading-tight">
-            <p className="text-sm font-semibold text-white">Secullum Compliance</p>
-            <p className="text-xs text-side-faint">por Geti Soluções</p>
+          <div className="min-w-0 leading-tight">
+            <p className="truncate text-sm font-semibold text-white">Secullum Compliance</p>
+            <p className="truncate text-xs text-side-faint">por Geti Soluções</p>
           </div>
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(false)}
+            aria-label="Fechar menu"
+            className="ml-auto flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-field text-side-faint hover:text-white md:hidden"
+          >
+            <X size={20} aria-hidden />
+          </button>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 px-3" aria-label="Principal">
-          {items.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) =>
-                `flex min-h-11 items-center gap-3 rounded-field px-3 text-sm font-medium transition-colors duration-150 ${
-                  isActive
-                    ? 'bg-side-raise text-white'
-                    : 'text-side-faint hover:bg-side-raise/60 hover:text-side-ink'
-                }`
-              }
-            >
-              <Icon size={18} aria-hidden />
-              {label}
-            </NavLink>
-          ))}
+        <nav className="min-h-0 flex-1 overflow-y-auto px-3" aria-label="Principal">
+          <div className="flex flex-col gap-1">
+            {items.map(({ to, label, icon: Icon, end }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                onClick={() => setMobileNavOpen(false)}
+                className={({ isActive }) =>
+                  `flex min-h-11 items-center gap-3 rounded-field px-3 text-sm font-medium transition-colors duration-150 ${
+                    isActive
+                      ? 'bg-side-raise text-white'
+                      : 'text-side-faint hover:bg-side-raise/60 hover:text-side-ink'
+                  }`
+                }
+              >
+                <Icon size={18} aria-hidden />
+                {label}
+              </NavLink>
+            ))}
+          </div>
         </nav>
 
         <div className="border-t border-side-raise px-5 py-4">
@@ -166,7 +207,7 @@ export default function AppShell() {
           <button
             type="button"
             onClick={logout}
-            className="mt-2 flex items-center gap-2 rounded-field text-sm font-medium text-side-ink transition-colors duration-150 hover:text-white"
+            className="mt-2 flex min-h-11 items-center gap-2 rounded-field text-sm font-medium text-side-ink transition-colors duration-150 hover:text-white"
           >
             <LogOut size={15} aria-hidden />
             Sair
@@ -175,28 +216,29 @@ export default function AppShell() {
       </aside>
 
       {/* Cabeçalho mobile */}
-      <header className="sticky top-0 z-30 flex items-center justify-between bg-side px-4 py-3 text-side-ink md:hidden">
-        <div className="flex items-center gap-2.5">
-          <ShieldCheck size={20} className="text-brand-ring" aria-hidden />
-          <div className="leading-tight">
-            <p className="text-sm font-semibold text-white">Secullum Compliance</p>
+      <header className="sticky top-0 z-30 flex items-center gap-1 bg-side px-2 py-3 text-side-ink md:hidden">
+        <button
+          type="button"
+          onClick={() => setMobileNavOpen(true)}
+          aria-label="Abrir menu"
+          aria-expanded={mobileNavOpen}
+          className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-field text-side-faint hover:text-white"
+        >
+          <Menu size={20} aria-hidden />
+        </button>
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 px-2">
+          <ShieldCheck size={20} className="shrink-0 text-brand-ring" aria-hidden />
+          <div className="min-w-0 leading-tight">
+            <p className="truncate text-sm font-semibold text-white">Secullum Compliance</p>
             {state.phase === 'ready' && (
-              <p className="max-w-52 truncate text-xs text-side-faint">{state.tenant.name}</p>
+              <p className="truncate text-xs text-side-faint">{state.tenant.name}</p>
             )}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={logout}
-          aria-label="Sair"
-          className="rounded-field p-2 text-side-faint hover:text-white"
-        >
-          <LogOut size={18} />
-        </button>
       </header>
 
       {/* Conteúdo */}
-      <main className="min-w-0 flex-1 pb-24 md:ml-60 md:pb-10">
+      <main className="min-w-0 flex-1 pb-10 md:ml-60 md:pb-10">
         <div className="mx-auto w-full max-w-4xl px-4 pt-6 md:px-10 md:pt-10">
           {state.phase === 'loading' && (
             <div className="flex flex-col gap-4">
@@ -228,32 +270,6 @@ export default function AppShell() {
           )}
         </div>
       </main>
-
-      {/* Navegação mobile */}
-      <nav
-        className="fixed inset-x-0 bottom-0 z-30 flex border-t border-side-raise bg-side text-side-faint md:hidden"
-        aria-label="Principal"
-      >
-        {items.map(({ to, label, icon: Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            className={({ isActive }) =>
-              `flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors duration-150 ${
-                isActive ? 'text-white' : 'hover:text-side-ink'
-              }`
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <Icon size={20} className={isActive ? 'text-brand-ring' : undefined} aria-hidden />
-                {label}
-              </>
-            )}
-          </NavLink>
-        ))}
-      </nav>
     </div>
   )
 }
