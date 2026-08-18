@@ -1,6 +1,7 @@
 import {
   BarChart3,
   CalendarDays,
+  ChevronDown,
   ChevronRight,
   Clock,
   FileWarning,
@@ -62,6 +63,20 @@ const nf = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 })
 function shortDate(isoDate: string): string {
   const [, m, d] = isoDate.slice(0, 10).split('-')
   return d && m ? `${d}/${m}` : isoDate
+}
+
+// scrollToSection leva o usuário até a seção que explica o número de um card de KPI, em
+// vez de ele ter que procurar rolando a página. O destaque temporário confirma que
+// chegou no lugar certo — a seção pode já estar visível (nada rola) ou vários scrolls
+// abaixo.
+function scrollToSection(id: string) {
+  const el = document.getElementById(id)
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  el.classList.add('ring-2', 'ring-brand', 'ring-offset-2')
+  window.setTimeout(() => {
+    el.classList.remove('ring-2', 'ring-brand', 'ring-offset-2')
+  }, 1600)
 }
 
 interface DerivedMetrics {
@@ -280,20 +295,38 @@ function Dashboard({
     <div className="mt-8 flex flex-col gap-6">
       {d ? (
         <>
-          <CollaboratorsSummary syncedTotal={syncedTotal} withAlerts={d.affectedCollaborators} />
+          {/* Leitura do dia selecionado: números-resumo primeiro, depois quem está por trás
+              deles e o detalhamento que explica cada número acima. */}
           <KpiRow derived={d} metrics={m} reportCount={reports.length} />
+          <CollaboratorsSummary syncedTotal={syncedTotal} withAlerts={d.affectedCollaborators} />
+          <DistributionChart byType={d.byType} total={d.total} />
+          <TopCollaborators inconsistencies={selectedReport?.inconsistencies ?? []} />
         </>
       ) : (
         <NoReportForDay day={selectedDay} />
       )}
 
+      <TrendChart series={series} selectedDate={selectedReport?.date ?? ''} onSelect={onSelectDate} />
+
+      <LiveStateDivider />
+
       {/* Estas duas seções são o estado ATUAL (independem do dia selecionado acima). */}
       <OccurrencesByCategory />
       <WarningsSummary />
+    </div>
+  )
+}
 
-      {d && <DistributionChart byType={d.byType} total={d.total} />}
-      <TrendChart series={series} selectedDate={selectedReport?.date ?? ''} onSelect={onSelectDate} />
-      {d && <TopCollaborators inconsistencies={selectedReport?.inconsistencies ?? []} />}
+// ---------- Divisor: sinaliza a troca de contexto para o estado ATUAL do sistema ----------
+
+function LiveStateDivider() {
+  return (
+    <div className="flex items-center gap-3" role="separator">
+      <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+        Situação atual
+      </span>
+      <span className="h-px flex-1 bg-line" aria-hidden />
+      <span className="shrink-0 text-xs text-ink-faint">independe do dia selecionado acima</span>
     </div>
   )
 }
@@ -384,7 +417,7 @@ function OccurrencesByCategory() {
           <Layers size={16} className="text-ink-faint" aria-hidden />
           <div>
             <h2 className="text-sm font-semibold text-ink">Em aberto por categoria</h2>
-            <p className="text-xs text-ink-faint">Situação atual — independe do dia selecionado acima</p>
+            <p className="text-xs text-ink-faint">Ocorrências abertas neste momento</p>
           </div>
         </div>
         {branches.length > 0 && (
@@ -532,6 +565,7 @@ function KpiRow({
           value={`${nf.format(metrics.compliance_rate)}%`}
           hint="colaboradores sem ocorrência"
           tone={metrics.compliance_rate >= 90 ? 'ok' : metrics.compliance_rate >= 70 ? 'alerta' : 'critico'}
+          targetId="colaboradores-ocorrencias"
         />
         <Kpi
           icon={<TrendingUp size={17} aria-hidden />}
@@ -539,6 +573,7 @@ function KpiRow({
           value={String(metrics.total_inconsistencies)}
           hint={`${metrics.critical} crítica${metrics.critical === 1 ? '' : 's'} · ${metrics.alert} alerta${metrics.alert === 1 ? '' : 's'}`}
           tone={metrics.total_inconsistencies === 0 ? 'ok' : metrics.critical > 0 ? 'critico' : 'alerta'}
+          targetId="distribuicao-tipo"
         />
         <Kpi
           icon={<Users size={17} aria-hidden />}
@@ -546,6 +581,7 @@ function KpiRow({
           value={String(metrics.collaborators_audited)}
           hint="auditados na varredura"
           tone="neutral"
+          targetId="colaboradores-resumo"
         />
         <Kpi
           icon={<Clock size={17} aria-hidden />}
@@ -577,6 +613,7 @@ function KpiRow({
             : `${derived.alert} alerta${derived.alert === 1 ? '' : 's'} + ${derived.critical} crítica${derived.critical === 1 ? '' : 's'}`
         }
         tone={derived.total === 0 ? 'ok' : derived.critical > 0 ? 'critico' : 'alerta'}
+        targetId="distribuicao-tipo"
       />
       <Kpi
         icon={<OctagonAlert size={17} aria-hidden />}
@@ -584,6 +621,7 @@ function KpiRow({
         value={String(derived.critical)}
         hint={derived.critical === 0 ? 'nenhuma ação urgente' : 'exigem ação imediata'}
         tone={derived.critical > 0 ? 'critico' : 'ok'}
+        targetId="colaboradores-ocorrencias"
       />
       <Kpi
         icon={<CalendarDays size={17} aria-hidden />}
@@ -591,6 +629,7 @@ function KpiRow({
         value={String(reportCount)}
         hint="no histórico do período"
         tone="neutral"
+        targetId="evolucao-varreduras"
       />
     </section>
   )
@@ -610,7 +649,11 @@ function CollaboratorsSummary({
   const correct = syncedTotal != null ? Math.max(0, syncedTotal - withAlerts) : null
 
   return (
-    <section aria-label="Colaboradores sob auditoria">
+    <section
+      id="colaboradores-resumo"
+      aria-label="Colaboradores sob auditoria"
+      className="scroll-mt-20 rounded-card"
+    >
       <div className="mb-3 flex items-center gap-2">
         <Users size={16} className="text-ink-faint" aria-hidden />
         <h2 className="text-sm font-semibold text-ink">Colaboradores</h2>
@@ -648,6 +691,7 @@ function CollaboratorsSummary({
             value={String(withAlerts)}
             hint="com ao menos uma ocorrência"
             tone={withAlerts > 0 ? 'alerta' : 'ok'}
+            targetId="colaboradores-ocorrencias"
           />
         </div>
       )}
@@ -670,22 +714,41 @@ function Kpi({
   value,
   hint,
   tone,
+  targetId,
 }: {
   icon: ReactNode
   label: string
   value: string
   hint: string
   tone: Tone
+  // Quando informado, o card vira um atalho: clicar rola até a seção que detalha esse
+  // número, em vez do usuário ter que procurá-la rolando a página manualmente.
+  targetId?: string
 }) {
-  return (
-    <div className="flex flex-col gap-2 rounded-card border border-line bg-bg p-4 shadow-card">
+  const content = (
+    <>
       <div className="flex items-center gap-1.5 text-ink-faint">
         {icon}
         <span className="text-xs font-semibold uppercase tracking-wide">{label}</span>
+        {targetId && <ChevronDown size={14} className="ml-auto shrink-0" aria-hidden />}
       </div>
       <span className={`text-2xl font-semibold tabular-nums ${toneValue[tone]}`}>{value}</span>
       <span className="text-xs text-ink-soft">{hint}</span>
-    </div>
+    </>
+  )
+
+  if (!targetId) {
+    return <div className="flex flex-col gap-2 rounded-card border border-line bg-bg p-4 shadow-card">{content}</div>
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => scrollToSection(targetId)}
+      className="flex flex-col gap-2 rounded-card border border-line bg-bg p-4 text-left shadow-card transition-colors duration-150 hover:border-ink-faint"
+    >
+      {content}
+    </button>
   )
 }
 
@@ -725,8 +788,9 @@ function DistributionChart({
 
   return (
     <section
+      id="distribuicao-tipo"
       aria-label="Distribuição de inconsistências por tipo"
-      className="rounded-card border border-line bg-bg p-5 shadow-card"
+      className="scroll-mt-20 rounded-card border border-line bg-bg p-5 shadow-card"
     >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -784,8 +848,9 @@ function TrendChart({
 
   return (
     <section
+      id="evolucao-varreduras"
       aria-label="Tendência de inconsistências por varredura"
-      className="rounded-card border border-line bg-bg p-5 shadow-card"
+      className="scroll-mt-20 rounded-card border border-line bg-bg p-5 shadow-card"
     >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -869,8 +934,9 @@ function TopCollaborators({ inconsistencies }: { inconsistencies: AuditInconsist
 
   return (
     <section
+      id="colaboradores-ocorrencias"
       aria-label="Colaboradores com mais ocorrências"
-      className="rounded-card border border-line bg-bg p-5 shadow-card"
+      className="scroll-mt-20 rounded-card border border-line bg-bg p-5 shadow-card"
     >
       <div className="mb-4 flex items-center gap-2">
         <Users size={16} className="text-ink-faint" aria-hidden />
