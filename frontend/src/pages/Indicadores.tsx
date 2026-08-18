@@ -29,6 +29,7 @@ import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
 import { CATEGORY_ORDER } from '../lib/categories'
 import { formatDate, formatDateTime, yesterday } from '../lib/format'
+import { dedupeByDay } from '../lib/reports'
 import type {
   AuditInconsistency,
   Branch,
@@ -279,9 +280,11 @@ function Dashboard({
 
   // Série cronológica (o backend devolve do mais recente ao mais antigo) para a tendência.
   // Não depende do dia selecionado — mostra a evolução do histórico inteiro.
+  // Uma coluna por dia, sempre a varredura mais recente — reauditorias do mesmo dia não
+  // duplicam coluna aqui (isso fica só em Logs/Histórico do sistema).
   const series = useMemo(
     () =>
-      reports
+      dedupeByDay(reports)
         .slice(0, TREND_LIMIT)
         .map((r) => {
           const dm = derive(r)
@@ -299,7 +302,11 @@ function Dashboard({
               deles e o detalhamento que explica cada número acima. */}
           <KpiRow derived={d} metrics={m} reportCount={reports.length} />
           <CollaboratorsSummary syncedTotal={syncedTotal} withAlerts={d.affectedCollaborators} />
-          <DistributionChart byType={d.byType} total={d.total} />
+          <DistributionChart
+            byType={d.byType}
+            total={d.total}
+            inconsistencies={selectedReport?.inconsistencies ?? []}
+          />
           <TopCollaborators inconsistencies={selectedReport?.inconsistencies ?? []} />
         </>
       ) : (
@@ -774,10 +781,13 @@ function SeverityLegend() {
 function DistributionChart({
   byType,
   total,
+  inconsistencies,
 }: {
   byType: Record<string, { critical: number; alert: number }>
   total: number
+  inconsistencies: AuditInconsistency[]
 }) {
+  const [expanded, setExpanded] = useState<string | null>(null)
   const known = TYPE_ORDER.filter((t) => byType[t] != null)
   const extras = Object.keys(byType).filter((t) => !TYPE_ORDER.includes(t))
   const rows = [...known, ...extras].map((type) => {
@@ -810,20 +820,52 @@ function DistributionChart({
             const pct = total > 0 ? Math.round((count / total) * 100) : 0
             const widthPct = max > 0 ? (count / max) * 100 : 0
             const critShare = count > 0 ? (critical / count) * 100 : 0
+            const isExpanded = expanded === type
+            const offenders = inconsistencies.filter((i) => i.Type === type)
             return (
               <li key={type} className="flex flex-col gap-1.5">
-                <div className="flex items-baseline justify-between gap-3 text-sm">
-                  <span className="font-medium text-ink">{type}</span>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(isExpanded ? null : type)}
+                  aria-expanded={isExpanded}
+                  className="flex items-baseline justify-between gap-3 rounded-field text-left text-sm transition-colors duration-150 hover:text-brand"
+                >
+                  <span className="flex items-center gap-1 font-medium text-ink">
+                    {type}
+                    <ChevronDown
+                      size={14}
+                      aria-hidden
+                      className={`shrink-0 text-ink-faint transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                    />
+                  </span>
                   <span className="shrink-0 tabular-nums text-ink-soft">
                     {count} <span className="text-ink-faint">({pct}%)</span>
                   </span>
-                </div>
+                </button>
                 <div className="h-2.5 w-full overflow-hidden rounded-full bg-panel" aria-hidden>
                   <div className="flex h-full transition-[width] duration-500 ease-out" style={{ width: `${widthPct}%` }}>
                     {critical > 0 && <div className="h-full bg-critico" style={{ width: `${critShare}%` }} />}
                     {alert > 0 && <div className="h-full bg-alerta" style={{ width: `${100 - critShare}%` }} />}
                   </div>
                 </div>
+                {isExpanded && (
+                  <ul className="mt-1 divide-y divide-line rounded-card border border-line">
+                    {offenders.map((item, index) => (
+                      <li key={index}>
+                        <Link
+                          to={`/colaboradores/${item.CollaboratorID}`}
+                          className="flex items-center gap-3 px-3 py-2.5 transition-colors duration-150 hover:bg-panel"
+                        >
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
+                            {item.CollaboratorName}
+                          </span>
+                          <SeverityBadge severity={item.Severity} />
+                          <ChevronRight size={16} aria-hidden className="shrink-0 text-ink-faint" />
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </li>
             )
           })}
