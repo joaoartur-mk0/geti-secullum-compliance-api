@@ -1,13 +1,12 @@
-// Histórico completo de auditorias — todas as execuções, sem deduplicar por dia, e os
-// controles para disparar uma nova varredura (agora ou para um dia específico).
-
-import { Activity, CalendarSearch, History, PlayCircle, RefreshCw, X } from 'lucide-react'
+import { Activity, CalendarSearch, ClipboardList, PlayCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import ReportRow from '../components/ReportRow'
 import { Button, EmptyState, ErrorNote, Input, Skeleton, useToast } from '../components/ui'
 import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
 import { formatDate, yesterday } from '../lib/format'
+import { dedupeByDay } from '../lib/reports'
 import type { HealthResponse, Report } from '../lib/types'
 
 type Loadable<T> =
@@ -20,28 +19,27 @@ export default function Auditorias() {
   const toast = useToast()
   const [reports, setReports] = useState<Loadable<Report[]>>({ phase: 'loading' })
   const [health, setHealth] = useState<HealthResponse | null>(null)
-  const [filterDate, setFilterDate] = useState('')
   const [triggering, setTriggering] = useState(false)
   const [pickingDate, setPickingDate] = useState(false)
   const [pickedDate, setPickedDate] = useState('')
   const [triggeringDate, setTriggeringDate] = useState(false)
 
-  const load = useCallback(async () => {
+  const loadReports = useCallback(async () => {
     setReports({ phase: 'loading' })
     try {
       setReports({ phase: 'ready', data: await api.listReports(tenant.id) })
     } catch (error) {
       setReports({
         phase: 'error',
-        message: error instanceof ApiError ? error.message : 'Erro ao carregar auditorias.',
+        message: error instanceof ApiError ? error.message : 'Erro ao carregar relatórios.',
       })
     }
   }, [tenant.id])
 
   useEffect(() => {
-    void load()
+    void loadReports()
     api.health().then(setHealth).catch(() => setHealth(null))
-  }, [load])
+  }, [loadReports])
 
   async function triggerAudit() {
     setTriggering(true)
@@ -78,23 +76,39 @@ export default function Auditorias() {
     }
   }
 
-  const filtered = useMemo(() => {
-    if (reports.phase !== 'ready') return []
-    if (!filterDate) return reports.data
-    return reports.data.filter((r) => r.date.slice(0, 10) === filterDate)
-  }, [reports, filterDate])
+  const summary = useMemo(() => {
+    if (reports.phase !== 'ready' || reports.data.length === 0) return null
+    const latest = reports.data[0]
+    const criticos = (latest.inconsistencies ?? []).filter((i) => i.Severity === 'CRITICO').length
+    return { latest, criticos }
+  }, [reports])
 
-  const total = reports.phase === 'ready' ? reports.data.length : 0
+  // Só a varredura mais recente de cada dia — o log completo (com reauditorias) fica em
+  // Logs/Histórico do sistema, em Configurações.
+  const dailyReports = useMemo(
+    () => (reports.phase === 'ready' ? dedupeByDay(reports.data) : []),
+    [reports],
+  )
 
   return (
     <div className="animate-rise">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Auditorias</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Histórico de varreduras</h1>
           <p className="mt-1 text-sm text-ink-soft">
-            {reports.phase === 'ready'
-              ? `${total} varredura${total === 1 ? '' : 's'} no histórico — inclui reauditorias do mesmo dia.`
-              : 'Histórico completo de varreduras, da mais recente à mais antiga.'}
+            {summary ? (
+              <>
+                Última auditoria em <strong className="font-semibold text-ink">{formatDate(summary.latest.date)}</strong>
+                {' · '}
+                {summary.latest.total === 0
+                  ? 'nenhuma inconsistência'
+                  : `${summary.latest.total} inconsistência${summary.latest.total > 1 ? 's' : ''}${
+                      summary.criticos > 0 ? ` (${summary.criticos} crítica${summary.criticos > 1 ? 's' : ''})` : ''
+                    }`}
+              </>
+            ) : (
+              'Acompanhe as auditorias diárias de jornada da sua equipe.'
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -138,74 +152,58 @@ export default function Auditorias() {
         </div>
       )}
 
-      <div className="mt-6 flex flex-wrap items-end gap-2">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-ink">Filtrar por dia</span>
-          <Input
-            type="date"
-            value={filterDate}
-            max={yesterday()}
-            onChange={(e) => setFilterDate(e.target.value)}
-            aria-label="Filtrar auditorias por data"
-          />
-        </label>
-        {filterDate && (
+      <section className="mt-8" aria-label="Situação por dia">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-ink-soft">Situação por dia</h2>
+            <p className="text-xs text-ink-faint">
+              Uma linha por dia, sempre a varredura mais recente.{' '}
+              <Link to="/configuracoes/logs" className="font-medium text-brand underline underline-offset-2 hover:text-brand-strong">
+                Ver histórico completo
+              </Link>
+            </p>
+          </div>
           <button
             type="button"
-            onClick={() => setFilterDate('')}
-            className="flex min-h-11 items-center gap-1.5 rounded-field px-2.5 text-sm font-medium text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink"
+            onClick={loadReports}
+            className="flex items-center gap-1.5 rounded-field px-2 py-1 text-sm font-medium text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink"
           >
-            <X size={15} aria-hidden />
-            Limpar filtro
+            <RefreshCw size={14} aria-hidden />
+            Atualizar
           </button>
+        </div>
+
+        {reports.phase === 'loading' && (
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+          </div>
         )}
-        <button
-          type="button"
-          onClick={load}
-          className="flex min-h-11 items-center gap-1.5 rounded-field px-2.5 text-sm font-medium text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink"
-        >
-          <RefreshCw size={15} aria-hidden />
-          Atualizar
-        </button>
-      </div>
 
-      {reports.phase === 'loading' && (
-        <div className="mt-6 flex flex-col gap-2">
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-        </div>
-      )}
+        {reports.phase === 'error' && <ErrorNote message={reports.message} onRetry={loadReports} />}
 
-      {reports.phase === 'error' && (
-        <div className="mt-6">
-          <ErrorNote message={reports.message} onRetry={load} />
-        </div>
-      )}
-
-      {reports.phase === 'ready' && reports.data.length === 0 && (
-        <div className="mt-6">
+        {reports.phase === 'ready' && dailyReports.length === 0 && (
           <EmptyState
-            icon={<History size={32} strokeWidth={1.5} />}
-            title="Nenhuma auditoria ainda"
-            description='As auditorias rodam nos horários configurados em Avisos, ou dispare uma agora com o botão "Auditar agora" acima. O resultado aparece aqui, mesmo que o mesmo dia seja auditado mais de uma vez.'
+            icon={<ClipboardList size={32} strokeWidth={1.5} />}
+            title="Nenhum relatório ainda"
+            description='As auditorias rodam nos horários configurados em Avisos, ou dispare uma agora com o botão "Auditar agora". O resultado aparece aqui.'
+            action={
+              <Link to="/avisos" className="text-sm font-semibold text-brand underline underline-offset-2 hover:text-brand-strong">
+                Configurar horários de varredura
+              </Link>
+            }
           />
-        </div>
-      )}
+        )}
 
-      {reports.phase === 'ready' && reports.data.length > 0 && filtered.length === 0 && (
-        <p className="mt-6 text-center text-sm text-ink-soft">
-          Nenhuma auditoria encontrada para {formatDate(filterDate)}.
-        </p>
-      )}
-
-      {filtered.length > 0 && (
-        <ul className="mt-4 flex flex-col gap-2">
-          {filtered.map((report) => (
-            <ReportRow key={report.id} report={report} />
-          ))}
-        </ul>
-      )}
+        {reports.phase === 'ready' && dailyReports.length > 0 && (
+          <ul className="flex flex-col gap-2">
+            {dailyReports.map((report) => (
+              <ReportRow key={report.id} report={report} />
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   )
 }

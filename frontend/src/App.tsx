@@ -9,6 +9,7 @@ import Empresa from './pages/Empresa'
 import Filiais from './pages/Filiais'
 import Gestores from './pages/Gestores'
 import Indicadores from './pages/Indicadores'
+import LogsHistorico from './pages/LogsHistorico'
 import Login from './pages/Login'
 import Moderacao from './pages/Moderacao'
 import WhatsApp from './pages/WhatsApp'
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="avisos" element={<Avisos />} />
             <Route path="whatsapp" element={<WhatsApp />} />
             <Route path="empresa" element={<Empresa />} />
+            <Route path="configuracoes/logs" element={<LogsHistorico />} />
             <Route path="moderacao" element={<Moderacao />} />
           </Route>
         </Routes>

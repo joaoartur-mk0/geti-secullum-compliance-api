@@ -220,13 +220,13 @@ export default function Indicadores() {
           <EmptyState
             icon={<BarChart3 size={32} strokeWidth={1.5} />}
             title="Nenhuma varredura ainda"
-            description="Os indicadores são calculados a partir das varreduras de compliance. Dispare uma auditoria em Auditorias — o resultado aparece aqui."
+            description="Os indicadores são calculados a partir das varreduras de compliance. Dispare uma auditoria em Histórico de varreduras — o resultado aparece aqui."
             action={
               <Link
                 to="/auditorias"
                 className="text-sm font-semibold text-brand underline underline-offset-2 hover:text-brand-strong"
               >
-                Ir para Auditorias
+                Ir para Histórico de varreduras
               </Link>
             }
           />
@@ -305,14 +305,14 @@ function NoReportForDay({ day }: { day: string }) {
     <section className="rounded-card border border-dashed border-line px-6 py-10 text-center">
       <p className="font-semibold text-ink">Nenhuma varredura para {formatDate(day)}</p>
       <p className="mx-auto mt-1 max-w-md text-sm text-ink-soft">
-        Esse dia ainda não foi auditado. Dispare uma auditoria específica em Auditorias, ou escolha outro
-        dia acima ou no gráfico de evolução mais abaixo.
+        Esse dia ainda não foi auditado. Dispare uma auditoria específica em Histórico de varreduras, ou
+        escolha outro dia acima ou no gráfico de evolução mais abaixo.
       </p>
       <Link
         to="/auditorias"
         className="mt-3 inline-block text-sm font-semibold text-brand underline underline-offset-2 hover:text-brand-strong"
       >
-        Ir para Auditorias
+        Ir para Histórico de varreduras
       </Link>
     </section>
   )
