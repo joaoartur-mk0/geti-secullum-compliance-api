@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -130,6 +131,69 @@ func TestScheduler_IgnoraTenantSemHorarioConfigurado(t *testing.T) {
 
 	if got := pub.count(); got != 0 {
 		t.Fatalf("tenant sem horário/settings não deveria disparar, veio %d", got)
+	}
+}
+
+// A varredura diária (tick) é a ÚNICA que deve notificar o WhatsApp: notify:true no
+// payload publicado.
+func TestScheduler_TickPublicaNotifyTrue(t *testing.T) {
+	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
+	pub := &fakePublisher{}
+	s := NewSchedulerService(repo, pub)
+
+	s.tick(at("01:00"))
+
+	if len(pub.calls) != 1 {
+		t.Fatalf("esperava 1 chamada, veio %d", len(pub.calls))
+	}
+	if !strings.Contains(pub.calls[0], `"notify":true`) {
+		t.Errorf("esperava notify:true no payload da varredura diária, veio %s", pub.calls[0])
+	}
+}
+
+func TestScheduler_HourlyTickDisparaParaTodosOsAtivos(t *testing.T) {
+	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{
+		tenantWithHorario(1, "01:00"),
+		tenantWithHorario(2, ""), // sem horário diário configurado; a atualização horária não depende disso
+	}}
+	pub := &fakePublisher{}
+	s := NewSchedulerService(repo, pub)
+
+	s.hourlyTick()
+
+	if got := pub.count(); got != 2 {
+		t.Fatalf("esperava 1 disparo silencioso por tenant ativo (2), veio %d", got)
+	}
+}
+
+// A atualização horária nunca notifica o WhatsApp: notify:false no payload publicado.
+func TestScheduler_HourlyTickPublicaNotifyFalse(t *testing.T) {
+	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
+	pub := &fakePublisher{}
+	s := NewSchedulerService(repo, pub)
+
+	s.hourlyTick()
+
+	if len(pub.calls) != 1 {
+		t.Fatalf("esperava 1 chamada, veio %d", len(pub.calls))
+	}
+	if !strings.Contains(pub.calls[0], `"notify":false`) {
+		t.Errorf("esperava notify:false no payload da atualização horária, veio %s", pub.calls[0])
+	}
+}
+
+// A atualização horária não usa claimForToday: pode disparar de novo mesmo no mesmo dia
+// (é o comportamento esperado, ao contrário da varredura diária).
+func TestScheduler_HourlyTickNaoTemLimiteDiario(t *testing.T) {
+	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
+	pub := &fakePublisher{}
+	s := NewSchedulerService(repo, pub)
+
+	s.hourlyTick()
+	s.hourlyTick()
+
+	if got := pub.count(); got != 2 {
+		t.Fatalf("esperava 2 disparos (1 por chamada), veio %d", got)
 	}
 }
 

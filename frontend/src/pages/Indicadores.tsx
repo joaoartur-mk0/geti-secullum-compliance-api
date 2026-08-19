@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   BarChart3,
   CalendarDays,
   ChevronDown,
@@ -8,6 +9,7 @@ import {
   Layers,
   OctagonAlert,
   RefreshCw,
+  Settings2,
   ShieldCheck,
   TrendingUp,
   Users,
@@ -29,7 +31,6 @@ import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
 import { CATEGORY_ORDER } from '../lib/categories'
 import { formatDate, formatDateTime, yesterday } from '../lib/format'
-import { dedupeByDay } from '../lib/reports'
 import type {
   AuditInconsistency,
   Branch,
@@ -55,8 +56,24 @@ const TYPE_ORDER = [
   'Alerta de Hora Extra',
 ]
 
-// Nº máximo de varreduras exibidas no gráfico de tendência.
-const TREND_LIMIT = 12
+// Nº máximo de varreduras exibidas no gráfico de tendência — proteção para quando nenhum
+// filtro de período está ativo (histórico inteiro); os presets de período (7d/30d/mês)
+// já ficam bem abaixo disso e aparecem por completo.
+const MAX_CHART_BARS = 62
+
+// isoDaysAgo devolve a data de N dias atrás no formato "YYYY-MM-DD", para os presets de
+// período (7 dias, 30 dias).
+function isoDaysAgo(n: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() - n)
+  return d.toISOString().slice(0, 10)
+}
+
+// isoStartOfMonth devolve o primeiro dia do mês corrente, para o preset "Este mês".
+function isoStartOfMonth(): string {
+  const d = new Date()
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
+}
 
 const nf = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 })
 
@@ -115,6 +132,10 @@ function derive(report: Report): DerivedMetrics {
   }
 }
 
+// Presets do filtro de período — "Tudo" não manda start_date/end_date (histórico
+// inteiro, sujeito só ao teto de exibição do gráfico, ver MAX_CHART_BARS).
+type PeriodPreset = '7d' | '30d' | 'month' | 'custom' | 'all'
+
 export default function Indicadores() {
   const { tenant } = useTenant()
   const [reports, setReports] = useState<Loadable<Report[]>>({ phase: 'loading' })
@@ -122,8 +143,38 @@ export default function Indicadores() {
   // não derruba os indicadores — só oculta o painel de equipe. null = desconhecido/erro.
   const [syncedTotal, setSyncedTotal] = useState<number | null>(null)
   // Dia selecionado para inspeção (YYYY-MM-DD). null = padrão = a varredura mais recente
-  // (D-1). Reseta para o padrão a cada troca de tenant/atualização — ver `load`.
+  // (D-1) dentro do período filtrado. Reseta a cada troca de tenant/período — ver `load`.
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  // Período consultado — controla o que é pedido a GET /reports (?start_date&end_date).
+  // Padrão: últimos 30 dias, para o painel já abrir mostrando uma janela útil em vez do
+  // histórico inteiro.
+  const [preset, setPreset] = useState<PeriodPreset>('30d')
+  const [periodStart, setPeriodStart] = useState(() => isoDaysAgo(30))
+  const [periodEnd, setPeriodEnd] = useState(() => yesterday())
+
+  function applyPreset(next: PeriodPreset) {
+    setPreset(next)
+    switch (next) {
+      case '7d':
+        setPeriodStart(isoDaysAgo(7))
+        setPeriodEnd(yesterday())
+        break
+      case '30d':
+        setPeriodStart(isoDaysAgo(30))
+        setPeriodEnd(yesterday())
+        break
+      case 'month':
+        setPeriodStart(isoStartOfMonth())
+        setPeriodEnd(yesterday())
+        break
+      case 'all':
+        setPeriodStart('')
+        setPeriodEnd('')
+        break
+      case 'custom':
+        break // datas ficam com o que o usuário já escolheu nos campos De/Até
+    }
+  }
 
   const load = useCallback(async () => {
     setReports({ phase: 'loading' })
@@ -135,14 +186,20 @@ export default function Indicadores() {
       .then((r) => setSyncedTotal(r.total))
       .catch(() => setSyncedTotal(null))
     try {
-      setReports({ phase: 'ready', data: await api.listReports(tenant.id) })
+      setReports({
+        phase: 'ready',
+        data: await api.listReports(tenant.id, {
+          start_date: periodStart || undefined,
+          end_date: periodEnd || undefined,
+        }),
+      })
     } catch (error) {
       setReports({
         phase: 'error',
         message: error instanceof ApiError ? error.message : 'Erro ao carregar indicadores.',
       })
     }
-  }, [tenant.id])
+  }, [tenant.id, periodStart, periodEnd])
 
   useEffect(() => {
     void load()
@@ -213,6 +270,21 @@ export default function Indicadores() {
         </div>
       </header>
 
+      <PeriodFilterBar
+        preset={preset}
+        periodStart={periodStart}
+        periodEnd={periodEnd}
+        onPreset={applyPreset}
+        onCustomStart={(v) => {
+          setPreset('custom')
+          setPeriodStart(v)
+        }}
+        onCustomEnd={(v) => {
+          setPreset('custom')
+          setPeriodEnd(v)
+        }}
+      />
+
       {reports.phase === 'loading' && (
         <div className="mt-8 flex flex-col gap-6">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -231,7 +303,26 @@ export default function Indicadores() {
         </div>
       )}
 
-      {reports.phase === 'ready' && reports.data.length === 0 && (
+      {reports.phase === 'ready' && reports.data.length === 0 && preset !== 'all' && (
+        <div className="mt-8">
+          <EmptyState
+            icon={<BarChart3 size={32} strokeWidth={1.5} />}
+            title="Nenhuma varredura no período selecionado"
+            description="Tente um período maior — botão 'Tudo' acima — ou dispare uma auditoria em Histórico de varreduras."
+            action={
+              <button
+                type="button"
+                onClick={() => applyPreset('all')}
+                className="text-sm font-semibold text-brand underline underline-offset-2 hover:text-brand-strong"
+              >
+                Ver todo o histórico
+              </button>
+            }
+          />
+        </div>
+      )}
+
+      {reports.phase === 'ready' && reports.data.length === 0 && preset === 'all' && (
         <div className="mt-8">
           <EmptyState
             icon={<BarChart3 size={32} strokeWidth={1.5} />}
@@ -262,6 +353,84 @@ export default function Indicadores() {
   )
 }
 
+// ---------- Filtro de período (dia único, semana, mês ou intervalo customizado) ----------
+//
+// Controla o que é pedido a GET /reports (?start_date&end_date) — não é um filtro de
+// exibição sobre uma lista já carregada. "Tudo" limpa os dois parâmetros (histórico
+// inteiro, sujeito ao teto de exibição do gráfico de tendência).
+
+const PERIOD_PRESETS: { key: PeriodPreset; label: string }[] = [
+  { key: '7d', label: '7 dias' },
+  { key: '30d', label: '30 dias' },
+  { key: 'month', label: 'Este mês' },
+  { key: 'all', label: 'Tudo' },
+]
+
+function PeriodFilterBar({
+  preset,
+  periodStart,
+  periodEnd,
+  onPreset,
+  onCustomStart,
+  onCustomEnd,
+}: {
+  preset: PeriodPreset
+  periodStart: string
+  periodEnd: string
+  onPreset: (preset: PeriodPreset) => void
+  onCustomStart: (value: string) => void
+  onCustomEnd: (value: string) => void
+}) {
+  return (
+    <div
+      className="mt-4 flex flex-wrap items-end gap-2 rounded-card border border-line bg-bg p-3 shadow-card"
+      aria-label="Filtro de período"
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        {PERIOD_PRESETS.map((p) => (
+          <button
+            key={p.key}
+            type="button"
+            onClick={() => onPreset(p.key)}
+            aria-pressed={preset === p.key}
+            className={`flex min-h-9 items-center rounded-field px-3 text-sm font-medium transition-colors duration-150 ${
+              preset === p.key
+                ? 'bg-brand text-white'
+                : 'border border-line text-ink-soft hover:border-ink-faint hover:text-ink'
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <span className="text-xs text-ink-faint">ou personalizado:</span>
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-ink-soft">De</span>
+        <Input
+          type="date"
+          value={periodStart}
+          max={periodEnd || yesterday()}
+          onChange={(e) => onCustomStart(e.target.value)}
+          aria-label="Início do período"
+          className="min-h-9"
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-ink-soft">Até</span>
+        <Input
+          type="date"
+          value={periodEnd}
+          min={periodStart || undefined}
+          max={yesterday()}
+          onChange={(e) => onCustomEnd(e.target.value)}
+          aria-label="Fim do período"
+          className="min-h-9"
+        />
+      </label>
+    </div>
+  )
+}
+
 function Dashboard({
   reports,
   selectedReport,
@@ -279,13 +448,13 @@ function Dashboard({
   const m: ReportMetrics | null = selectedReport?.metrics ?? null
 
   // Série cronológica (o backend devolve do mais recente ao mais antigo) para a tendência.
-  // Não depende do dia selecionado — mostra a evolução do histórico inteiro.
-  // Uma coluna por dia, sempre a varredura mais recente — reauditorias do mesmo dia não
-  // duplicam coluna aqui (isso fica só em Logs/Histórico do sistema).
+  // Não depende do dia selecionado — mostra a evolução do período filtrado (ver
+  // PeriodFilterBar). `reports` já vem do backend com uma linha por dia (a mais recente)
+  // — GET /reports deduplica.
   const series = useMemo(
     () =>
-      dedupeByDay(reports)
-        .slice(0, TREND_LIMIT)
+      reports
+        .slice(0, MAX_CHART_BARS)
         .map((r) => {
           const dm = derive(r)
           return { date: r.date, total: dm.total, critical: dm.critical, alert: dm.alert }
@@ -301,6 +470,7 @@ function Dashboard({
           {/* Leitura do dia selecionado: números-resumo primeiro, depois quem está por trás
               deles e o detalhamento que explica cada número acima. */}
           <KpiRow derived={d} metrics={m} reportCount={reports.length} />
+          <IncidentShortcuts inconsistencies={selectedReport?.inconsistencies ?? []} />
           <CollaboratorsSummary syncedTotal={syncedTotal} withAlerts={d.affectedCollaborators} />
           <DistributionChart
             byType={d.byType}
@@ -639,6 +809,75 @@ function KpiRow({
         targetId="evolucao-varreduras"
       />
     </section>
+  )
+}
+
+// ---------- Atalhos: cards de severidade → listagem completa em /incidents ----------
+//
+// Diferente dos KPIs acima (que rolam até a seção explicativa na própria página), estes
+// cards levam pra listagem filtrável de ocorrências (/incidents), pré-filtrada pela
+// severidade clicada.
+
+function IncidentShortcuts({ inconsistencies }: { inconsistencies: AuditInconsistency[] }) {
+  const counts = useMemo(() => {
+    const c = { CRITICO: 0, ALERTA: 0, OPERACIONAL: 0 }
+    for (const item of inconsistencies) c[item.Severity]++
+    return c
+  }, [inconsistencies])
+
+  return (
+    <section aria-label="Atalhos de ocorrências por severidade" className="grid grid-cols-3 gap-3">
+      <ShortcutCard
+        icon={<OctagonAlert size={17} aria-hidden />}
+        label="Críticas"
+        value={counts.CRITICO}
+        tone="critico"
+        to="/incidents?severity=CRITICO"
+      />
+      <ShortcutCard
+        icon={<AlertTriangle size={17} aria-hidden />}
+        label="Alertas"
+        value={counts.ALERTA}
+        tone="alerta"
+        to="/incidents?severity=ALERTA"
+      />
+      <ShortcutCard
+        icon={<Settings2 size={17} aria-hidden />}
+        label="Operacionais"
+        value={counts.OPERACIONAL}
+        tone="neutral"
+        to="/incidents?severity=OPERACIONAL"
+      />
+    </section>
+  )
+}
+
+function ShortcutCard({
+  icon,
+  label,
+  value,
+  tone,
+  to,
+}: {
+  icon: ReactNode
+  label: string
+  value: number
+  tone: Tone
+  to: string
+}) {
+  return (
+    <Link
+      to={to}
+      className="flex flex-col gap-2 rounded-card border border-line bg-bg p-4 text-left shadow-card transition-colors duration-150 hover:border-ink-faint"
+    >
+      <div className="flex items-center gap-1.5 text-ink-faint">
+        {icon}
+        <span className="text-xs font-semibold uppercase tracking-wide">{label}</span>
+        <ChevronRight size={14} className="ml-auto shrink-0" aria-hidden />
+      </div>
+      <span className={`text-2xl font-semibold tabular-nums ${toneValue[tone]}`}>{value}</span>
+      <span className="text-xs text-ink-soft">ver ocorrências</span>
+    </Link>
   )
 }
 

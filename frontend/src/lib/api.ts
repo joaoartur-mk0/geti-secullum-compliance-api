@@ -90,6 +90,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// reportDateQuery monta a querystring de filtro por período (?start_date=&end_date=)
+// compartilhada por listReports e listReportHistory.
+function reportDateQuery(filters?: { start_date?: string; end_date?: string }): string {
+  const params = new URLSearchParams()
+  if (filters?.start_date) params.set('start_date', filters.start_date)
+  if (filters?.end_date) params.set('end_date', filters.end_date)
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
+}
+
 export const api = {
   health: () => request<HealthResponse>('/health'),
 
@@ -106,6 +116,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ tenant_id: tenantId, ...(date ? { date } : {}) }),
     }),
+
+  // Audita um período completo (semana, mês ou intervalo customizado, até 62 dias) de uma
+  // vez — o backend salva um relatório por dia, consultável depois em /reports e
+  // /reports/history. Mutuamente exclusivo com o `date` de triggerAudit.
+  triggerAuditRange: (tenantId: number, startDate: string, endDate: string) =>
+    request<{ message: string; tenant_id: number; start_date: string; end_date: string; status: string }>(
+      '/api/v1/audit/trigger',
+      {
+        method: 'POST',
+        body: JSON.stringify({ tenant_id: tenantId, start_date: startDate, end_date: endDate }),
+      },
+    ),
 
   listTenants: (includeInactive = false) =>
     request<{ tenants: Tenant[] | null }>(
@@ -194,10 +216,19 @@ export const api = {
   deleteStaff: (staffId: number) =>
     request<{ message: string }>(`/api/v1/staffs/${staffId}`, { method: 'DELETE' }),
 
-  listReports: (tenantId: number) =>
-    request<{ reports: Report[] | null }>(`/api/v1/tenants/${tenantId}/reports`).then(
-      (r) => r.reports ?? [],
-    ),
+  // GET /reports: só a varredura mais recente de cada dia (o backend já deduplica). Aceita
+  // ?start_date=&end_date= para consultar/filtrar um período completo (semana, mês).
+  listReports: (tenantId: number, filters?: { start_date?: string; end_date?: string }) =>
+    request<{ reports: Report[] | null }>(
+      `/api/v1/tenants/${tenantId}/reports${reportDateQuery(filters)}`,
+    ).then((r) => r.reports ?? []),
+
+  // GET /reports/history: histórico completo, inclusive reauditorias do mesmo dia. Mesmos
+  // filtros de período que listReports.
+  listReportHistory: (tenantId: number, filters?: { start_date?: string; end_date?: string }) =>
+    request<{ reports: Report[] | null }>(
+      `/api/v1/tenants/${tenantId}/reports/history${reportDateQuery(filters)}`,
+    ).then((r) => r.reports ?? []),
 
   listCollaborators: (tenantId: number) =>
     request<{ collaborators: Collaborator[] | null; total: number }>(

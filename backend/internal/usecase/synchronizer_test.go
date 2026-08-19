@@ -55,6 +55,9 @@ type fakeSecullumSvc struct {
 func (f *fakeSecullumSvc) GetDailyPunches(*domain.Tenant, time.Time) ([]domain.DailyPunch, error) {
 	return nil, nil
 }
+func (f *fakeSecullumSvc) GetDailyPunchesRange(*domain.Tenant, time.Time, time.Time) ([]domain.DailyPunch, error) {
+	return nil, nil
+}
 func (f *fakeSecullumSvc) GetCollaborators(*domain.Tenant) ([]domain.Collaborator, error) {
 	return f.collaborators, f.err
 }

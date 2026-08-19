@@ -56,7 +56,7 @@ const navItems = [
 // Itens de configurações: menos evidentes que a navegação principal, ficam num bloco
 // separado abaixo dela.
 const settingsNavItems = [
-  { to: '/configuracoes/logs', label: 'Logs/Histórico do sistema', icon: ScrollText, end: false },
+  { to: '/reports/history', label: 'Histórico de auditorias', icon: ScrollText, end: false },
 ]
 
 type TenantState =

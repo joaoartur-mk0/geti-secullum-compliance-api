@@ -100,13 +100,23 @@ func (c *AuditConsumer) reject(msg amqp.Delivery, requeue bool, tenantID int, re
 }
 
 func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
-	// 1. Decodifica o JSON que veio do Handler HTTP.
+	// 1. Decodifica o JSON que veio do Handler HTTP ou do SchedulerService.
 	//
-	// `date` é opcional e serve para auditar um dia específico sob demanda. Sem ele —
-	// que é o caso da varredura diária automática — audita-se D-1, como sempre.
+	// `date` é opcional e serve para auditar um dia específico sob demanda. `start_date`/
+	// `end_date` auditam um período completo (semana, mês) de uma vez, salvando um
+	// relatório por dia. Sem nenhum dos três — o caso da varredura diária automática —
+	// audita-se D-1, como sempre.
+	//
+	// `notify` controla se o resumo desta auditoria é enfileirado no WhatsApp dos
+	// gestores. É `true` SOMENTE na varredura diária automática do horário configurado
+	// (aba Avisos); auditorias manuais (handler HTTP) e a atualização horária silenciosa
+	// (SchedulerService.hourlyTick) sempre publicam `false` — nunca notificam.
 	var payload struct {
-		TenantID int    `json:"tenant_id"`
-		Date     string `json:"date"`
+		TenantID  int    `json:"tenant_id"`
+		Date      string `json:"date"`
+		StartDate string `json:"start_date"`
+		EndDate   string `json:"end_date"`
+		Notify    bool   `json:"notify"`
 	}
 	if err := json.Unmarshal(msg.Body, &payload); err != nil {
 		// Payload malformado nunca ficará válido em nova tentativa: descarta (requeue=false).
@@ -149,34 +159,77 @@ func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
 		return
 	}
 
-	// 4. Determina o dia auditado — o informado no evento (auditoria sob demanda de um dia
-	// específico) ou, na ausência dele, D-1: o fechamento diário automático de sempre. E o
-	// dia anterior a ele, necessário apenas para a regra de interjornada.
-	diaAlvo := resolveTargetDay(payload.Date, time.Now())
-	diaAnterior := diaAlvo.AddDate(0, 0, -1)
+	// 4. Determina os dias a auditar — o período informado (start_date/end_date), o dia
+	// específico informado (date), ou, na ausência de todos, D-1: o fechamento diário
+	// automático de sempre. `dias` vem do mais antigo ao mais recente.
+	dias := resolveTargetDays(payload.Date, payload.StartDate, payload.EndDate, time.Now())
 
-	punchesAlvo, err := c.secullumSvc.GetDailyPunches(tenant, diaAlvo)
+	// 5. Busca as batidas de TODO o período numa ÚNICA chamada à Secullum — inclusive o
+	// dia anterior ao primeiro dia auditado, necessário só para a interjornada dele. Isto
+	// é o que evita 1 requisição por dia numa auditoria de período completo (semana/mês)
+	// e o consequente risco de rate limiting.
+	rangeStart := dias[0].AddDate(0, 0, -1)
+	rangeEnd := dias[len(dias)-1]
+	punches, err := c.secullumSvc.GetDailyPunchesRange(tenant, rangeStart, rangeEnd)
 	if err != nil {
 		// Falha externa (rede/token/rate-limit) é transitória: devolve à fila para retry.
-		c.reject(msg, true, payload.TenantID, fmt.Sprintf("falha ao buscar batidas de %s: %v", diaAlvo.Format("2006-01-02"), err))
+		c.reject(msg, true, payload.TenantID, fmt.Sprintf("falha ao buscar batidas de %s a %s: %v",
+			rangeStart.Format("2006-01-02"), rangeEnd.Format("2006-01-02"), err))
 		return
 	}
+	punchesByDay := indexPunchesByDay(punches)
 
-	// As batidas de D-2 alimentam apenas a regra de interjornada. Um erro aqui não
-	// invalida a auditoria de D-1, mas NÃO é silenciado: registramos e seguimos sem elas.
-	punchesAnterior, err := c.secullumSvc.GetDailyPunches(tenant, diaAnterior)
-	if err != nil {
-		log.Printf("[Aviso Secullum] Tenant %d: falha ao buscar batidas de %s (interjornada será ignorada): %v\n",
-			payload.TenantID, diaAnterior.Format("2006-01-02"), err)
-		punchesAnterior = nil
+	// 6. Audita cada dia do período separadamente, salvando um relatório por dia — é
+	// isso que permite consultar/filtrar dias específicos depois, mesmo quando a
+	// auditoria foi disparada para um período inteiro de uma vez.
+	for _, diaAlvo := range dias {
+		resumo, inconsistencies, err := c.auditDay(tenant, collaborators, diaAlvo, punchesByDay)
+		if err != nil {
+			// Sem reconciliar/salvar, o estado do dia fica pela metade: devolve à fila
+			// para retry. Dias já processados com sucesso antes deste no mesmo período
+			// serão reprocessados também — inofensivo para a reconciliação (idempotente),
+			// mas pode duplicar o relatório já salvo desses dias (mesmo risco que já
+			// existia numa falha de Ack de dia único).
+			c.reject(msg, true, payload.TenantID, err.Error())
+			return
+		}
+
+		log.Printf("[OK] Auditoria de %s concluída! %d colaborador(es) avaliado(s), %d infração(ões) apurada(s) — %d nova(s), %d atualizada(s), %d reaberta(s), %d resolvida(s), %d inalterada(s).\n",
+			diaAlvo.Format("2006-01-02"), len(collaborators), len(inconsistencies),
+			len(resumo.Created), len(resumo.Updated), len(resumo.Reopened), len(resumo.Resolved), resumo.Unchanged)
+
+		// Notifica os gestores (staffs) do tenant com o resumo do fechamento deste dia —
+		// SOMENTE quando `notify` veio true no evento (a varredura diária automática do
+		// horário configurado). Auditorias manuais e a atualização horária silenciosa
+		// atualizam os dados sem repetir o alerta no WhatsApp. A publicação em
+		// `notifications.whatsapp` (seção 5.4 da especificação) só enfileira — a entrega
+		// via Evolution API é responsabilidade do worker de notificações.
+		if payload.Notify {
+			c.notifyStaffs(tenant, diaAlvo, resumo)
+		}
 	}
 
-	// Indexa as batidas por colaborador (o CollaboratorID do DailyPunch é o id do
-	// funcionário na Secullum, o mesmo espaço de SecullumID do nosso colaborador local).
-	mapaAlvo := indexPunchesByCollaborator(punchesAlvo)
-	mapaAnterior := indexPunchesByCollaborator(punchesAnterior)
+	// 7. Confirma (Ack) para o RabbitMQ apagar a mensagem da fila
+	if err := msg.Ack(false); err != nil {
+		// Os relatórios já foram salvos; o Ack falhou. A mensagem poderá ser reentregue e
+		// gerar relatórios duplicados — registrado aqui para rastreabilidade.
+		log.Printf("[Erro] Tenant %d: relatório(s) salvo(s), mas falha ao confirmar (Ack) mensagem: %v\n", payload.TenantID, err)
+	}
+}
 
-	// 5. Audita CADA colaborador sincronizado do tenant (não mais um único mockado).
+// auditDay audita todos os colaboradores para UM dia e persiste o resultado (reconciliação
+// de ocorrências + relatório). `punchesByDay` já contém as batidas de todo o período
+// (ver processMessage) — este método só faz a leitura do dia alvo e do dia anterior a ele.
+func (c *AuditConsumer) auditDay(
+	tenant *domain.Tenant,
+	collaborators []domain.Collaborator,
+	diaAlvo time.Time,
+	punchesByDay map[string]map[int]domain.DailyPunch,
+) (usecase.ReconcileResult, []domain.AuditInconsistency, error) {
+	mapaAlvo := punchesByDay[diaAlvo.Format("2006-01-02")]
+	mapaAnterior := punchesByDay[diaAlvo.AddDate(0, 0, -1).Format("2006-01-02")]
+
+	// Audita CADA colaborador sincronizado do tenant.
 	var inconsistencies []domain.AuditInconsistency
 	for i := range collaborators {
 		collab := collaborators[i]
@@ -201,13 +254,13 @@ func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
 			&punchAlvo,
 			punchAnteriorPtr,
 			time.Now(),
-			true, // isClosing: esta é a consolidação noturna do dia encerrado (D-1)
+			true, // isClosing: esta é a consolidação do dia encerrado
 		)
 		if err != nil {
 			// Erros de qualidade de dado (ex.: batida em formato inválido) não abortam a
 			// auditoria dos demais colaboradores nem são descartados: ficam registrados.
-			log.Printf("[Aviso Auditoria] Tenant %d, colaborador %d (%s): regras retornaram erros de dado: %v\n",
-				payload.TenantID, collab.SecullumID, collab.Name, err)
+			log.Printf("[Aviso Auditoria] Tenant %d, colaborador %d (%s), dia %s: regras retornaram erros de dado: %v\n",
+				tenant.ID, collab.SecullumID, collab.Name, diaAlvo.Format("2006-01-02"), err)
 		}
 
 		// Uniformiza a identificação da infração pelo id da Secullum (a chave de
@@ -220,18 +273,16 @@ func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
 		inconsistencies = append(inconsistencies, collabInconsistencies...)
 	}
 
-	// 6. Reconcilia as ocorrências do dia: é aqui que a auditoria deixa de empilhar listas
+	// Reconcilia as ocorrências do dia: é aqui que a auditoria deixa de empilhar listas
 	// e passa a mover estados. Auditar o mesmo dia de novo não duplica nada — atualiza o
 	// que mudou e resolve sozinho o que deixou de ser apurado.
-	resumo, err := c.reconcile(payload.TenantID, diaAlvo, inconsistencies)
+	resumo, err := c.reconcile(tenant.ID, diaAlvo, inconsistencies)
 	if err != nil {
-		// Sem reconciliar, o estado do dia fica pela metade: devolve à fila para retry.
-		c.reject(msg, true, payload.TenantID, fmt.Sprintf("falha ao reconciliar ocorrências: %v", err))
-		return
+		return usecase.ReconcileResult{}, nil, fmt.Errorf("falha ao reconciliar ocorrências de %s: %w", diaAlvo.Format("2006-01-02"), err)
 	}
 
-	// 7. Salva o Relatório consolidado no Banco de Dados (registro da execução da
-	// varredura, base do histórico e do gráfico de evolução do painel).
+	// Salva o Relatório consolidado no Banco de Dados (registro da execução da varredura,
+	// base do histórico e do gráfico de evolução do painel).
 	report := &domain.Report{
 		TenantID:        tenant.ID,
 		Date:            diaAlvo,
@@ -239,27 +290,10 @@ func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
 		Inconsistencies: inconsistencies,
 	}
 	if err := c.reportRepo.Save(report); err != nil {
-		// Persistência falhou: não podemos perder a auditoria. Devolve à fila (requeue=true).
-		c.reject(msg, true, payload.TenantID, fmt.Sprintf("falha ao salvar relatório: %v", err))
-		return
+		return usecase.ReconcileResult{}, nil, fmt.Errorf("falha ao salvar relatório de %s: %w", diaAlvo.Format("2006-01-02"), err)
 	}
 
-	log.Printf("[OK] Auditoria de %s concluída! %d colaborador(es) avaliado(s), %d infração(ões) apurada(s) — %d nova(s), %d atualizada(s), %d reaberta(s), %d resolvida(s), %d inalterada(s).\n",
-		diaAlvo.Format("2006-01-02"), len(collaborators), len(inconsistencies),
-		len(resumo.Created), len(resumo.Updated), len(resumo.Reopened), len(resumo.Resolved), resumo.Unchanged)
-
-	// 8. Notifica os gestores (staffs) do tenant com o resumo do fechamento noturno,
-	// publicando na fila `notifications.whatsapp` (seção 5.4 da especificação). A
-	// entrega via Evolution API é responsabilidade do worker de notificações — este
-	// worker apenas enfileira, sem esperar a latência da API externa.
-	c.notifyStaffs(tenant, diaAlvo, resumo)
-
-	// 9. Confirma (Ack) para o RabbitMQ apagar a mensagem da fila
-	if err := msg.Ack(false); err != nil {
-		// O relatório já foi salvo; o Ack falhou. A mensagem poderá ser reentregue e
-		// gerar um relatório duplicado — registrado aqui para rastreabilidade.
-		log.Printf("[Erro] Tenant %d: relatório salvo, mas falha ao confirmar (Ack) mensagem: %v\n", payload.TenantID, err)
-	}
+	return resumo, inconsistencies, nil
 }
 
 // notifyStaffs publica, para cada gestor (staff) cadastrado do tenant, um resumo da
@@ -348,6 +382,45 @@ func writeGroup(b *strings.Builder, title string, occurrences []domain.Occurrenc
 	for _, occ := range occurrences {
 		fmt.Fprintf(b, "• %s (%s) — %s: %s\n", occ.CollaboratorName, occ.Severity, occ.Type, occ.Description)
 	}
+}
+
+// resolveTargetDays devolve os dias a auditar, do mais antigo ao mais recente.
+//
+// Com startDate/endDate (auditoria de período completo) devolve o intervalo inteiro;
+// caso contrário, um único dia — ver resolveTargetDay. Um período malformado (datas
+// inválidas ou end antes de start) nunca deveria chegar aqui — o handler HTTP já valida
+// isso antes de publicar o evento — mas, se chegar, cai no mesmo fallback seguro que uma
+// `date` malformada: audita D-1 em vez de travar o worker.
+func resolveTargetDays(date, startDate, endDate string, now time.Time) []time.Time {
+	if startDate != "" && endDate != "" {
+		start, errStart := time.Parse("2006-01-02", startDate)
+		end, errEnd := time.Parse("2006-01-02", endDate)
+		if errStart == nil && errEnd == nil && !end.Before(start) {
+			days := make([]time.Time, 0, int(end.Sub(start).Hours()/24)+1)
+			for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
+				days = append(days, d)
+			}
+			return days
+		}
+		log.Printf("[Aviso Auditoria] período %q..%q inválido no evento; auditando D-1: start=%v end=%v", startDate, endDate, errStart, errEnd)
+	}
+	return []time.Time{resolveTargetDay(date, now)}
+}
+
+// indexPunchesByDay agrupa as batidas por dia (YYYY-MM-DD) e, dentro de cada dia, por
+// colaborador — o formato que a auditoria de período usa para varrer vários dias a partir
+// de uma única resposta da Secullum, sem repetir a busca dia a dia.
+func indexPunchesByDay(punches []domain.DailyPunch) map[string]map[int]domain.DailyPunch {
+	byDay := make(map[string][]domain.DailyPunch)
+	for _, p := range punches {
+		day := p.Date.Format("2006-01-02")
+		byDay[day] = append(byDay[day], p)
+	}
+	out := make(map[string]map[int]domain.DailyPunch, len(byDay))
+	for day, dayPunches := range byDay {
+		out[day] = indexPunchesByCollaborator(dayPunches)
+	}
+	return out
 }
 
 // resolveTargetDay devolve o dia a auditar: o informado no evento (auditoria sob demanda)

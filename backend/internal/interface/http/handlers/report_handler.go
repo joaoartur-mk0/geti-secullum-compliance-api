@@ -29,6 +29,11 @@ type reportResponse struct {
 }
 
 // List — GET /api/v1/tenants/:id/reports
+//
+// Devolve só a auditoria MAIS RECENTE de cada dia — o estado atual do painel, sem o
+// ruído de reauditorias do mesmo dia (isso fica em GET .../reports/history). Aceita os
+// mesmos filtros de período de ?start_date=&end_date=, para consultar semanas/meses
+// completos.
 func (h *ReportHandler) List(c *gin.Context) {
 	const op = "ReportHandler.List"
 
@@ -38,12 +43,66 @@ func (h *ReportHandler) List(c *gin.Context) {
 		return
 	}
 
-	reports, err := h.reportRepo.ListByTenant(tenantID)
+	start, end, err := reportDateRange(c, op)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
 	}
 
+	reports, err := h.reportRepo.ListLatestByTenant(tenantID, start, end)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"reports": toReportResponses(reports)})
+}
+
+// History — GET /api/v1/tenants/:id/reports/history
+//
+// Devolve o histórico COMPLETO de execuções (inclusive reauditorias do mesmo dia), da
+// mais recente para a mais antiga. Mesmos filtros de período que List.
+func (h *ReportHandler) History(c *gin.Context) {
+	const op = "ReportHandler.History"
+
+	tenantID, err := idParam(c, op, "id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	start, end, err := reportDateRange(c, op)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	reports, err := h.reportRepo.ListByTenant(tenantID, start, end)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"reports": toReportResponses(reports)})
+}
+
+// reportDateRange traduz ?start_date=&end_date= em limites opcionais de Report.Date, para
+// consultar e filtrar por período completo (semana, mês, intervalo customizado).
+func reportDateRange(c *gin.Context, op string) (start, end *time.Time, err error) {
+	if start, err = optionalDateQuery(c, op, "start_date"); err != nil {
+		return nil, nil, err
+	}
+	if end, err = optionalDateQuery(c, op, "end_date"); err != nil {
+		return nil, nil, err
+	}
+	if start != nil && end != nil && end.Before(*start) {
+		return nil, nil, domain.NewValidation(op, "intervalo de datas inválido", nil).
+			WithDetails("end_date não pode ser anterior a start_date")
+	}
+	return start, end, nil
+}
+
+func toReportResponses(reports []domain.Report) []reportResponse {
 	out := make([]reportResponse, 0, len(reports))
 	for _, r := range reports {
 		out = append(out, reportResponse{
@@ -55,5 +114,5 @@ func (h *ReportHandler) List(c *gin.Context) {
 			Inconsistencies: r.Inconsistencies,
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"reports": out})
+	return out
 }

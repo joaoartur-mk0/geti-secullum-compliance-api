@@ -259,8 +259,16 @@ func (s *AuditorService) checkMissingPunches(collab *domain.Collaborator, punch 
 
 // checkLunchBreak compara o primeiro intervalo efetivamente registrado com o mínimo
 // legal correspondente à carga prevista do dia (Art. 71 CLT).
+//
+// Domingo é exceção: o piso exigido é sempre 15min, independente da carga prevista do
+// dia — a escala de domingo costuma ser trabalho extraordinário com duração variável, e a
+// regra graduada (60min acima de 6h) não reflete esse cenário. A regra graduada
+// simplesmente não roda no domingo: só o piso de 15min é cobrado (nem mais, nem menos).
 func (s *AuditorService) checkLunchBreak(collab *domain.Collaborator, punch *domain.DailyPunch, cargaMinutos int, severity domain.Severity) (*domain.AuditInconsistency, error) {
 	minimo := requiredBreakMinutes(cargaMinutos)
+	if punch.Date.Weekday() == time.Sunday {
+		minimo = intervaloMinimoMedio
+	}
 	if minimo == 0 {
 		return nil, nil // jornada de até 4h: intervalo não é obrigatório
 	}

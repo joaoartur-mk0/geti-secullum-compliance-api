@@ -268,10 +268,17 @@ func abonoMarker(vals ...*string) string {
 
 // GetDailyPunches extrai as batidas do dia e as "limpa" para o domínio.
 func (c *secullumClient) GetDailyPunches(tenant *domain.Tenant, date time.Time) ([]domain.DailyPunch, error) {
+	return c.GetDailyPunchesRange(tenant, date, date)
+}
+
+// GetDailyPunchesRange extrai as batidas de um período completo (start a end, inclusive)
+// numa única chamada — a auditoria de período completo (semana/mês) usa isto para não
+// fazer uma requisição por dia e estourar o rate limiting da Secullum.
+func (c *secullumClient) GetDailyPunchesRange(tenant *domain.Tenant, start, end time.Time) ([]domain.DailyPunch, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
-	endpoint := fmt.Sprintf("%s/IntegracaoExterna/Batidas?DataInicio=%s&DataFim=%s", c.baseURL, date.Format("2006-01-02"), date.Format("2006-01-02"))
+	endpoint := fmt.Sprintf("%s/IntegracaoExterna/Batidas?DataInicio=%s&DataFim=%s", c.baseURL, start.Format("2006-01-02"), end.Format("2006-01-02"))
 
 	resp, err := c.do(ctx, http.MethodGet, endpoint, tenant)
 	if err != nil {

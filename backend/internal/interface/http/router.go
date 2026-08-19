@@ -139,8 +139,11 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 			tenantScoped.GET("/staffs", staffHandler.List)
 			tenantScoped.POST("/staffs", staffHandler.Create)
 
-			// Relatórios de auditoria (painel de consulta)
+			// Relatórios de auditoria (painel de consulta): /reports traz só a mais
+			// recente de cada dia; /reports/history traz o histórico completo, inclusive
+			// reauditorias do mesmo dia. Ambas aceitam ?start_date=&end_date=.
 			tenantScoped.GET("/reports", reportHandler.List)
+			tenantScoped.GET("/reports/history", reportHandler.History)
 
 			// Ocorrências (máquina de estados). Substitui a leitura de "lista de
 			// inconsistências por varredura": aqui cada ocorrência aparece UMA vez, com

@@ -1,4 +1,4 @@
-import { Activity, CalendarSearch, ClipboardList, PlayCircle, RefreshCw } from 'lucide-react'
+import { Activity, CalendarRange, CalendarSearch, ClipboardList, PlayCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ReportRow from '../components/ReportRow'
@@ -6,7 +6,6 @@ import { Button, EmptyState, ErrorNote, Input, Skeleton, useToast } from '../com
 import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
 import { formatDate, yesterday } from '../lib/format'
-import { dedupeByDay } from '../lib/reports'
 import type { HealthResponse, Report } from '../lib/types'
 
 type Loadable<T> =
@@ -23,7 +22,13 @@ export default function Auditorias() {
   const [pickingDate, setPickingDate] = useState(false)
   const [pickedDate, setPickedDate] = useState('')
   const [triggeringDate, setTriggeringDate] = useState(false)
+  const [pickingRange, setPickingRange] = useState(false)
+  const [rangeStart, setRangeStart] = useState('')
+  const [rangeEnd, setRangeEnd] = useState('')
+  const [triggeringRange, setTriggeringRange] = useState(false)
 
+  // GET /reports já devolve só a mais recente de cada dia (dedupe é feito no backend) —
+  // o painel não precisa reprocessar isso.
   const loadReports = useCallback(async () => {
     setReports({ phase: 'loading' })
     try {
@@ -76,19 +81,34 @@ export default function Auditorias() {
     }
   }
 
+  // Auditoria de um período completo (semana, mês ou intervalo customizado, até 62 dias):
+  // o backend salva um relatório por dia — não substitui a varredura diária automática,
+  // serve para conferir/recompor um trecho de dias já encerrados de uma vez.
+  async function triggerAuditForRange() {
+    if (!rangeStart || !rangeEnd) return
+    setTriggeringRange(true)
+    try {
+      const result = await api.triggerAuditRange(tenant.id, rangeStart, rangeEnd)
+      toast(
+        'success',
+        `Auditoria de ${formatDate(result.start_date)} a ${formatDate(result.end_date)} enfileirada. Atualize a lista em instantes.`,
+      )
+      setPickingRange(false)
+      setRangeStart('')
+      setRangeEnd('')
+    } catch (error) {
+      toast('error', error instanceof ApiError ? error.message : 'Falha ao disparar a auditoria de período.')
+    } finally {
+      setTriggeringRange(false)
+    }
+  }
+
   const summary = useMemo(() => {
     if (reports.phase !== 'ready' || reports.data.length === 0) return null
     const latest = reports.data[0]
     const criticos = (latest.inconsistencies ?? []).filter((i) => i.Severity === 'CRITICO').length
     return { latest, criticos }
   }, [reports])
-
-  // Só a varredura mais recente de cada dia — o log completo (com reauditorias) fica em
-  // Logs/Histórico do sistema, em Configurações.
-  const dailyReports = useMemo(
-    () => (reports.phase === 'ready' ? dedupeByDay(reports.data) : []),
-    [reports],
-  )
 
   return (
     <div className="animate-rise">
@@ -115,11 +135,25 @@ export default function Auditorias() {
           <HealthChip health={health} />
           <Button
             variant="secondary"
-            onClick={() => setPickingDate((v) => !v)}
+            onClick={() => {
+              setPickingDate((v) => !v)
+              setPickingRange(false)
+            }}
             aria-expanded={pickingDate}
           >
             <CalendarSearch size={17} aria-hidden />
             Auditar um dia
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setPickingRange((v) => !v)
+              setPickingDate(false)
+            }}
+            aria-expanded={pickingRange}
+          >
+            <CalendarRange size={17} aria-hidden />
+            Auditar um período
           </Button>
           <Button onClick={triggerAudit} busy={triggering}>
             <PlayCircle size={17} aria-hidden />
@@ -152,13 +186,47 @@ export default function Auditorias() {
         </div>
       )}
 
+      {pickingRange && (
+        <div className="mt-4 flex flex-wrap items-end gap-2 rounded-card border border-brand/30 bg-brand-soft/40 p-4 animate-rise">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-ink">De</span>
+            <Input
+              type="date"
+              value={rangeStart}
+              max={rangeEnd || yesterday()}
+              onChange={(e) => setRangeStart(e.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-ink">Até</span>
+            <Input
+              type="date"
+              value={rangeEnd}
+              min={rangeStart || undefined}
+              max={yesterday()}
+              onChange={(e) => setRangeEnd(e.target.value)}
+            />
+          </label>
+          <Button onClick={triggerAuditForRange} busy={triggeringRange} disabled={!rangeStart || !rangeEnd}>
+            Enfileirar
+          </Button>
+          <Button variant="ghost" onClick={() => setPickingRange(false)}>
+            Cancelar
+          </Button>
+          <p className="w-full text-xs text-ink-soft">
+            Audita cada dia do período separadamente (semana, mês ou intervalo customizado, até 62
+            dias) — não substitui a varredura diária automática.
+          </p>
+        </div>
+      )}
+
       <section className="mt-8" aria-label="Situação por dia">
         <div className="mb-3 flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-ink-soft">Situação por dia</h2>
             <p className="text-xs text-ink-faint">
               Uma linha por dia, sempre a varredura mais recente.{' '}
-              <Link to="/configuracoes/logs" className="font-medium text-brand underline underline-offset-2 hover:text-brand-strong">
+              <Link to="/reports/history" className="font-medium text-brand underline underline-offset-2 hover:text-brand-strong">
                 Ver histórico completo
               </Link>
             </p>
@@ -183,7 +251,7 @@ export default function Auditorias() {
 
         {reports.phase === 'error' && <ErrorNote message={reports.message} onRetry={loadReports} />}
 
-        {reports.phase === 'ready' && dailyReports.length === 0 && (
+        {reports.phase === 'ready' && reports.data.length === 0 && (
           <EmptyState
             icon={<ClipboardList size={32} strokeWidth={1.5} />}
             title="Nenhum relatório ainda"
@@ -196,9 +264,9 @@ export default function Auditorias() {
           />
         )}
 
-        {reports.phase === 'ready' && dailyReports.length > 0 && (
+        {reports.phase === 'ready' && reports.data.length > 0 && (
           <ul className="flex flex-col gap-2">
-            {dailyReports.map((report) => (
+            {reports.data.map((report) => (
               <ReportRow key={report.id} report={report} />
             ))}
           </ul>

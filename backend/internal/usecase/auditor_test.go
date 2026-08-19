@@ -173,6 +173,43 @@ func TestProcessRules_IntervaloDe15MinutosEmJornadaLongaInfringe(t *testing.T) {
 	}
 }
 
+// Domingo com carga prevista acima de 6h (trabalho extraordinário de duração variável):
+// a regra graduada exigiria 60min, mas no domingo o piso é sempre 15min.
+func TestProcessRules_DomingoIntervaloMinimoFlat15min(t *testing.T) {
+	s := NewAuditorService()
+	domingo := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC) // domingo
+	punch := &domain.DailyPunch{
+		Date:      domingo,
+		Previstas: pairs("08:00", "12:00", "13:00", "17:30"), // 8h30 previstas -> exigiria 60min num dia comum
+		Marcacoes: pairs("08:00", "12:00", "12:20", "18:00"), // intervalo de 20min
+	}
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if got, ok := findByType(inc, TipoAlmocoReduzido); ok {
+		t.Errorf("domingo exige só 15min de intervalo; 20min não deveria infringir: %q", got.Description)
+	}
+}
+
+// Domingo com intervalo abaixo dos 15min mínimos continua gerando ocorrência.
+func TestProcessRules_DomingoIntervaloAbaixoDe15MinInfringe(t *testing.T) {
+	s := NewAuditorService()
+	domingo := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC) // domingo
+	punch := &domain.DailyPunch{
+		Date:      domingo,
+		Previstas: pairs("08:00", "09:00", "09:15", "14:15"), // 6h
+		Marcacoes: pairs("08:00", "09:00", "09:10", "14:10"), // intervalo de só 10min
+	}
+	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if _, ok := findByType(inc, TipoAlmocoReduzido); !ok {
+		t.Fatalf("domingo com só 10min de intervalo deveria infringir o piso de 15min, veio %+v", inc)
+	}
+}
+
 func TestProcessRules_SeveridadeAlmocoConfiguravel(t *testing.T) {
 	s := NewAuditorService()
 	settings := allEnabled()

@@ -196,6 +196,11 @@ paths:
     post:
       tags: [Auditoria]
       summary: Enfileira uma auditoria para um tenant (processamento assíncrono)
+      description: >
+        Toda auditoria disparada por este endpoint é SILENCIOSA — nunca envia o resumo por
+        WhatsApp aos gestores, independente de `date` ou `start_date`/`end_date`. O único
+        alerta de WhatsApp é o da varredura diária automática do horário configurado (aba
+        Avisos), disparada internamente pelo agendador — não há como acioná-lo por aqui.
       requestBody:
         required: true
         content:
@@ -204,7 +209,9 @@ paths:
               $ref: "#/components/schemas/TriggerRequest"
       responses:
         "202":
-          description: Auditoria aceita para processamento
+          description: >
+            Auditoria aceita para processamento. Resposta de dia único traz `date`;
+            resposta de período traz `start_date`/`end_date` em vez disso.
           content:
             application/json:
               schema:
@@ -213,6 +220,8 @@ paths:
                   message: { type: string }
                   tenant_id: { type: integer }
                   date: { type: string, example: "2026-07-12" }
+                  start_date: { type: string, example: "2026-07-01" }
+                  end_date: { type: string, example: "2026-07-07" }
                   status: { type: string, example: processing }
         "400": { $ref: "#/components/responses/ValidationError" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -425,7 +434,47 @@ paths:
       - $ref: "#/components/parameters/TenantId"
     get:
       tags: [Relatórios]
-      summary: Lista os relatórios de auditoria do tenant (mais recentes primeiro)
+      summary: Lista os relatórios de auditoria do tenant (só a mais recente de cada dia)
+      description: >
+        Devolve, para cada dia auditado, apenas a execução mais recente — o estado atual
+        do painel. Para o histórico completo (inclusive reauditorias do mesmo dia), use
+        GET .../reports/history.
+      parameters:
+        - name: start_date
+          in: query
+          schema: { type: string, example: "2026-07-01" }
+          description: Início do período (YYYY-MM-DD), para consultar semanas/meses completos.
+        - name: end_date
+          in: query
+          schema: { type: string, example: "2026-07-31" }
+      responses:
+        "200":
+          description: Lista de relatórios
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reports:
+                    type: array
+                    items: { $ref: "#/components/schemas/Report" }
+
+  /api/v1/tenants/{id}/reports/history:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    get:
+      tags: [Relatórios]
+      summary: Histórico completo de auditorias do tenant (mais recentes primeiro)
+      description: >
+        Devolve TODAS as execuções, inclusive reauditorias do mesmo dia — o log completo.
+        Para o painel padrão (uma linha por dia), use GET .../reports.
+      parameters:
+        - name: start_date
+          in: query
+          schema: { type: string, example: "2026-07-01" }
+        - name: end_date
+          in: query
+          schema: { type: string, example: "2026-07-31" }
       responses:
         "200":
           description: Lista de relatórios
@@ -991,8 +1040,22 @@ components:
           example: "2026-07-12"
           description: >
             Opcional. Dia a auditar (YYYY-MM-DD), para conferir a situação de uma data
-            específica sob demanda. Omitido, audita D-1 — o mesmo que faz a varredura
-            diária automática. Só datas já encerradas (anteriores a hoje) são aceitas.
+            específica sob demanda. Omitido (e sem start_date/end_date), audita D-1 — o
+            mesmo que faz a varredura diária automática. Só datas já encerradas
+            (anteriores a hoje) são aceitas. Mutuamente exclusivo com start_date/end_date.
+        start_date:
+          type: string
+          example: "2026-07-01"
+          description: >
+            Opcional. Início de uma auditoria de período completo (semana, mês ou
+            intervalo customizado, até 62 dias) — deve vir acompanhado de end_date. Um
+            relatório é salvo para CADA dia do período. Mutuamente exclusivo com date.
+        end_date:
+          type: string
+          example: "2026-07-07"
+          description: >
+            Fim do período (inclusive), exigido junto com start_date. Precisa estar
+            encerrado (anterior a hoje), como em date.
 
     Tenant:
       type: object

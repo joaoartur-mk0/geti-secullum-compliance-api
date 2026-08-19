@@ -8,10 +8,11 @@ import Colaboradores from './pages/Colaboradores'
 import Empresa from './pages/Empresa'
 import Filiais from './pages/Filiais'
 import Gestores from './pages/Gestores'
+import Incidentes from './pages/Incidentes'
 import Indicadores from './pages/Indicadores'
-import LogsHistorico from './pages/LogsHistorico'
 import Login from './pages/Login'
 import Moderacao from './pages/Moderacao'
+import ReportsHistory from './pages/ReportsHistory'
 import WhatsApp from './pages/WhatsApp'
 
 export default function App() {
@@ -31,7 +32,8 @@ export default function App() {
             <Route path="avisos" element={<Avisos />} />
             <Route path="whatsapp" element={<WhatsApp />} />
             <Route path="empresa" element={<Empresa />} />
-            <Route path="configuracoes/logs" element={<LogsHistorico />} />
+            <Route path="reports/history" element={<ReportsHistory />} />
+            <Route path="incidents" element={<Incidentes />} />
             <Route path="moderacao" element={<Moderacao />} />
           </Route>
         </Routes>

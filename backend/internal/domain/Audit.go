@@ -184,13 +184,27 @@ type Report struct {
 	Inconsistencies []AuditInconsistency
 }
 
+// ReportRepository persiste e consulta as varreduras de auditoria (uma execução por
+// chamada de Save — reauditar o mesmo dia grava um novo registro, nunca sobrescreve).
+//
+// start/end (ambos opcionais, nil = sem limite) filtram por Report.Date, para consultar
+// e filtrar por período completo (semana, mês, intervalo customizado).
 type ReportRepository interface {
 	Save(report *Report) error
-	ListByTenant(tenantID int) ([]Report, error)
+	// ListByTenant devolve o HISTÓRICO completo (todas as execuções, inclusive
+	// reauditorias do mesmo dia), da mais recente para a mais antiga.
+	ListByTenant(tenantID int, start, end *time.Time) ([]Report, error)
+	// ListLatestByTenant devolve só a execução MAIS RECENTE de cada dia — o estado
+	// atual da auditoria, sem o ruído de reauditorias.
+	ListLatestByTenant(tenantID int, start, end *time.Time) ([]Report, error)
 }
 
 type SecullumService interface {
 	GetDailyPunches(tenant *Tenant, date time.Time) ([]DailyPunch, error)
+	// GetDailyPunchesRange busca as batidas de TODO um período (start a end, inclusive)
+	// numa única chamada à Secullum — usada pela auditoria de período completo (semana,
+	// mês) para não fazer uma requisição por dia e estourar o rate limiting da API.
+	GetDailyPunchesRange(tenant *Tenant, start, end time.Time) ([]DailyPunch, error)
 	GetCollaborators(tenant *Tenant) ([]Collaborator, error)
 	// GetHorario busca a jornada contratual (por dia da semana) associada ao número de
 	// horário do funcionário na Secullum (Funcionario.Horario.Numero).
