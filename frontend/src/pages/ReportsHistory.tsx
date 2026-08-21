@@ -1,6 +1,6 @@
-// Histórico completo de auditorias — todas as execuções, sem deduplicar por dia (isso é
-// Histórico de varreduras, em /auditorias, que mostra só a mais recente). Aqui dá para ver
-// cada varredura já rodada, inclusive reauditorias do mesmo dia.
+// Registro de execuções — toda auditoria já rodada, automática ou manual, sem deduplicar
+// por dia (o recorte de um dia por linha é Situação por dia, em /auditorias). É a trilha
+// de auditoria: aqui aparecem inclusive as reauditorias do mesmo dia.
 //
 // Consome GET /tenants/:id/reports/history, com filtro de período (start_date/end_date) —
 // dá para consultar semanas/meses completos, além de um único dia (De = Até).
@@ -63,11 +63,11 @@ export default function ReportsHistory() {
     <div className="animate-rise">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Histórico de auditorias</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Registro de execuções</h1>
           <p className="mt-1 text-sm text-ink-soft">
             {reports.phase === 'ready'
-              ? `${total} varredura${total === 1 ? '' : 's'} no histórico — inclui reauditorias do mesmo dia.`
-              : 'Histórico completo de varreduras, com data, hora, ocorrências detectadas e quem disparou.'}
+              ? `${total} execução${total === 1 ? '' : 'ões'} registrada${total === 1 ? '' : 's'} — inclui reauditorias do mesmo dia.`
+              : 'Toda auditoria já rodada, com data, hora, ocorrências detectadas e quem disparou.'}
           </p>
         </div>
         <button
@@ -132,7 +132,7 @@ export default function ReportsHistory() {
           <EmptyState
             icon={<History size={32} strokeWidth={1.5} />}
             title="Nenhuma auditoria ainda"
-            description='Dispare uma auditoria em Histórico de varreduras — cada execução aparece aqui, mesmo que o mesmo dia seja auditado mais de uma vez.'
+            description='Dispare uma auditoria em Situação por dia — cada execução aparece aqui, mesmo que o mesmo dia seja auditado mais de uma vez.'
           />
         )}
 

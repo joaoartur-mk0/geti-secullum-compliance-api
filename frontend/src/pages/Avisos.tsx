@@ -171,8 +171,8 @@ export default function Avisos() {
             <h2 className="text-sm font-semibold text-ink-soft">Horário da auditoria automática</h2>
             <p className="mt-1 max-w-prose text-sm text-ink-soft">
               Nesse horário, uma vez por dia, o sistema audita sozinho o fechamento do dia anterior e
-              envia o resumo para o WhatsApp dos gestores — sem precisar clicar em nada em Histórico de
-              varreduras.
+              envia o resumo para o WhatsApp dos gestores — sem precisar clicar em nada em Situação
+              por dia.
             </p>
             <div className="mt-3 flex items-center gap-2">
               <Clock size={16} className="text-ink-faint" aria-hidden />

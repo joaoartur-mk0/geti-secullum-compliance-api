@@ -43,7 +43,7 @@ export function useTenant(): TenantContextValue {
 
 const navItems = [
   { to: '/indicadores', label: 'Indicadores', icon: BarChart3, end: false, superAdminOnly: false },
-  { to: '/auditorias', label: 'Histórico', icon: History, end: false, superAdminOnly: false },
+  { to: '/auditorias', label: 'Situação por dia', icon: History, end: false, superAdminOnly: false },
   { to: '/colaboradores', label: 'Colaboradores', icon: Contact, end: false, superAdminOnly: false },
   { to: '/filiais', label: 'Filiais', icon: LandPlot, end: false, superAdminOnly: false },
   { to: '/gestores', label: 'Gestores', icon: Users, end: false, superAdminOnly: false },
@@ -56,7 +56,7 @@ const navItems = [
 // Itens de configurações: menos evidentes que a navegação principal, ficam num bloco
 // separado abaixo dela.
 const settingsNavItems = [
-  { to: '/reports/history', label: 'Histórico de auditorias', icon: ScrollText, end: false },
+  { to: '/reports/history', label: 'Registro de execuções', icon: ScrollText, end: false },
 ]
 
 type TenantState =

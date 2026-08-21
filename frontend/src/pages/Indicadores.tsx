@@ -38,6 +38,7 @@ import type {
   OccurrenceCategory,
   Report,
   ReportMetrics,
+  Severity,
   WarningCounts,
 } from '../lib/types'
 
@@ -308,7 +309,7 @@ export default function Indicadores() {
           <EmptyState
             icon={<BarChart3 size={32} strokeWidth={1.5} />}
             title="Nenhuma varredura no período selecionado"
-            description="Tente um período maior — botão 'Tudo' acima — ou dispare uma auditoria em Histórico de varreduras."
+            description="Tente um período maior — botão 'Tudo' acima — ou dispare uma auditoria em Situação por dia."
             action={
               <button
                 type="button"
@@ -327,13 +328,13 @@ export default function Indicadores() {
           <EmptyState
             icon={<BarChart3 size={32} strokeWidth={1.5} />}
             title="Nenhuma varredura ainda"
-            description="Os indicadores são calculados a partir das varreduras de compliance. Dispare uma auditoria em Histórico de varreduras — o resultado aparece aqui."
+            description="Os indicadores são calculados a partir das varreduras de compliance. Dispare uma auditoria em Situação por dia — o resultado aparece aqui."
             action={
               <Link
                 to="/auditorias"
                 className="text-sm font-semibold text-brand underline underline-offset-2 hover:text-brand-strong"
               >
-                Ir para Histórico de varreduras
+                Ir para Situação por dia
               </Link>
             }
           />
@@ -470,7 +471,10 @@ function Dashboard({
           {/* Leitura do dia selecionado: números-resumo primeiro, depois quem está por trás
               deles e o detalhamento que explica cada número acima. */}
           <KpiRow derived={d} metrics={m} reportCount={reports.length} />
-          <IncidentShortcuts inconsistencies={selectedReport?.inconsistencies ?? []} />
+          <IncidentShortcuts
+            inconsistencies={selectedReport?.inconsistencies ?? []}
+            date={selectedReport?.date ?? ''}
+          />
           <CollaboratorsSummary syncedTotal={syncedTotal} withAlerts={d.affectedCollaborators} />
           <DistributionChart
             byType={d.byType}
@@ -515,14 +519,14 @@ function NoReportForDay({ day }: { day: string }) {
     <section className="rounded-card border border-dashed border-line px-6 py-10 text-center">
       <p className="font-semibold text-ink">Nenhuma varredura para {formatDate(day)}</p>
       <p className="mx-auto mt-1 max-w-md text-sm text-ink-soft">
-        Esse dia ainda não foi auditado. Dispare uma auditoria específica em Histórico de varreduras, ou
+        Esse dia ainda não foi auditado. Dispare uma auditoria específica em Situação por dia, ou
         escolha outro dia acima ou no gráfico de evolução mais abaixo.
       </p>
       <Link
         to="/auditorias"
         className="mt-3 inline-block text-sm font-semibold text-brand underline underline-offset-2 hover:text-brand-strong"
       >
-        Ir para Histórico de varreduras
+        Ir para Situação por dia
       </Link>
     </section>
   )
@@ -816,14 +820,36 @@ function KpiRow({
 //
 // Diferente dos KPIs acima (que rolam até a seção explicativa na própria página), estes
 // cards levam pra listagem filtrável de ocorrências (/incidents), pré-filtrada pela
-// severidade clicada.
+// severidade clicada E pelo dia que está sendo inspecionado aqui — senão o número do card
+// (do dia selecionado) não bate com a lista que abre (o histórico inteiro).
 
-function IncidentShortcuts({ inconsistencies }: { inconsistencies: AuditInconsistency[] }) {
+function IncidentShortcuts({
+  inconsistencies,
+  date,
+}: {
+  inconsistencies: AuditInconsistency[]
+  date: string
+}) {
   const counts = useMemo(() => {
     const c = { CRITICO: 0, ALERTA: 0, OPERACIONAL: 0 }
     for (const item of inconsistencies) c[item.Severity]++
     return c
   }, [inconsistencies])
+
+  // O card conta as inconsistências de UM dia (o do relatório selecionado), então o link
+  // leva o mesmo dia nas duas pontas do período. Sem dia (nenhuma varredura no período),
+  // cai na lista sem filtro de data.
+  const incidentLink = useCallback(
+    (severity: Severity) => {
+      const params = new URLSearchParams({ severity })
+      if (date) {
+        params.set('start_date', date)
+        params.set('end_date', date)
+      }
+      return `/incidents?${params.toString()}`
+    },
+    [date],
+  )
 
   return (
     <section aria-label="Atalhos de ocorrências por severidade" className="grid grid-cols-3 gap-3">
@@ -832,21 +858,21 @@ function IncidentShortcuts({ inconsistencies }: { inconsistencies: AuditInconsis
         label="Críticas"
         value={counts.CRITICO}
         tone="critico"
-        to="/incidents?severity=CRITICO"
+        to={incidentLink('CRITICO')}
       />
       <ShortcutCard
         icon={<AlertTriangle size={17} aria-hidden />}
         label="Alertas"
         value={counts.ALERTA}
         tone="alerta"
-        to="/incidents?severity=ALERTA"
+        to={incidentLink('ALERTA')}
       />
       <ShortcutCard
         icon={<Settings2 size={17} aria-hidden />}
         label="Operacionais"
         value={counts.OPERACIONAL}
         tone="neutral"
-        to="/incidents?severity=OPERACIONAL"
+        to={incidentLink('OPERACIONAL')}
       />
     </section>
   )
