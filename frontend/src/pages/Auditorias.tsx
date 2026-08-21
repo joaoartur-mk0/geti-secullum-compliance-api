@@ -114,7 +114,7 @@ export default function Auditorias() {
     <div className="animate-rise">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Histórico de varreduras</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Situação por dia</h1>
           <p className="mt-1 text-sm text-ink-soft">
             {summary ? (
               <>
@@ -220,14 +220,14 @@ export default function Auditorias() {
         </div>
       )}
 
-      <section className="mt-8" aria-label="Situação por dia">
+      <section className="mt-8" aria-label="Dias auditados">
         <div className="mb-3 flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-ink-soft">Situação por dia</h2>
+            <h2 className="text-sm font-semibold text-ink-soft">Dias auditados</h2>
             <p className="text-xs text-ink-faint">
               Uma linha por dia, sempre a varredura mais recente.{' '}
               <Link to="/reports/history" className="font-medium text-brand underline underline-offset-2 hover:text-brand-strong">
-                Ver histórico completo
+                Ver registro de execuções
               </Link>
             </p>
           </div>

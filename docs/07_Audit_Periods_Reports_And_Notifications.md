@@ -217,13 +217,13 @@ Testes: `TestScheduler_TickPublicaNotifyTrue`,
 
 ### 5.1 `/reports/history` (`frontend/src/pages/ReportsHistory.tsx`)
 
-Página nova, substitui a antiga `/configuracoes/logs`. Consome `GET /reports/history` de
+Página nova ("Registro de execuções" no menu), substitui a antiga `/configuracoes/logs`. Consome `GET /reports/history` de
 verdade (antes era interino, apontando para o `GET /reports` antigo). Tabela com sort por
 data, e filtro de período **De/Até** (não mais um único dia) — usa `start_date`/`end_date`
 de verdade em vez de filtrar no cliente. Coluna "Disparada por" fica com `—`: o backend
 ainda não expõe quem disparou cada execução.
 
-### 5.2 `/auditorias` (Histórico de varreduras)
+### 5.2 `/auditorias` (Situação por dia)
 
 - Ganhou um segundo picker, **"Auditar um período"** (De/Até, até 62 dias), ao lado do
   já existente "Auditar um dia" — chama `api.triggerAuditRange`.

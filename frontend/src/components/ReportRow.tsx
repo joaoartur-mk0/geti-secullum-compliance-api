@@ -1,5 +1,5 @@
-// Linha expansível de uma varredura (relatório), compartilhada entre Histórico de
-// varreduras (1 por dia) e Logs/Histórico do sistema (log completo, com repetições do mesmo dia).
+// Linha expansível de uma varredura (relatório), compartilhada entre Situação por dia
+// (1 linha por dia) e Registro de execuções (log completo, com repetições do mesmo dia).
 
 import { ChevronDown } from 'lucide-react'
 import { useState } from 'react'
