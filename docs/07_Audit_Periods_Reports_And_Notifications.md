@@ -19,21 +19,36 @@ do dia: >6h exige 60min, >4h e ≤6h exige 15min. Isso presumia que a jornada de
 sempre ~6h — na prática nem sempre é (trabalho extraordinário de duração variável), e um
 domingo com mais carga acabava exigindo 60min por engano.
 
-Agora, quando `punch.Date` cai num domingo, o piso é **sempre 15min**, independente da
-carga do dia — a regra graduada (60min acima de 6h) simplesmente não roda no domingo:
+Uma primeira correção trocou isso por um piso fixo de 15min aos domingos — mas testes
+reais mostraram que ainda gerava CRÍTICO para pausas curtas (ex.: 14min), o que não é o
+comportamento desejado: **domingo não deve ter regra graduada nenhuma**, nem os 60min, nem
+um piso de 15min. A regra final é mais simples: só importa se o colaborador fez **alguma**
+pausa.
 
 ```go
-minimo := requiredBreakMinutes(cargaMinutos)
+intervalo, ok, err := punch.FirstBreak()
+// ...
 if punch.Date.Weekday() == time.Sunday {
-    minimo = intervaloMinimoMedio // 15min, sempre
+    if ok && intervalo > 0 {
+        return nil, nil // fez alguma pausa: conta como almoço feito, mesmo que curta
+    }
+    return &domain.AuditInconsistency{
+        Type:     TipoAlmocoReduzido,
+        Severity: domain.SeverityAlert, // nunca CRÍTICO no domingo
+        // ...
+    }, nil
 }
 ```
 
-- Domingo com 20min de intervalo e 8h30 de carga prevista → **não infringe** (antes exigiria 60min).
-- Domingo com 10min de intervalo → **infringe** (abaixo do piso de 15min).
+- Domingo com **qualquer** pausa registrada (mesmo 1min) → **não infringe**. Um intervalo
+  de 14min, que antes disparava CRÍTICO, agora não gera ocorrência nenhuma.
+- Domingo **sem nenhuma** pausa (turno corrido, `FirstBreak` não encontra gap) → infringe,
+  mas sempre com severidade **ALERTA** — nunca CRÍTICO, mesmo que o tenant tenha
+  `almoco_severity: CRITICO` configurado para o resto da semana. A severidade não é
+  configurável para este caso específico.
 
-Testes: `TestProcessRules_DomingoIntervaloMinimoFlat15min`,
-`TestProcessRules_DomingoIntervaloAbaixoDe15MinInfringe`.
+Testes: `TestProcessRules_DomingoComPausaCurtaNaoInfringe`,
+`TestProcessRules_DomingoSemPausaInfringeComoAlerta`.
 
 ---
 
@@ -213,7 +228,7 @@ nenhum filtro está ativo — preset "Tudo").
 
 | Arquivo | Mudança |
 |---|---|
-| `backend/internal/usecase/auditor.go` | Piso de 15min fixo aos domingos em `checkLunchBreak` |
+| `backend/internal/usecase/auditor.go` | Domingo só infringe intervalo sem NENHUMA pausa, sempre como ALERTA, em `checkLunchBreak` |
 | `backend/internal/interface/http/handlers/audit_handler.go` | `TriggerRequest` aceita `start_date`/`end_date`; `resolvePeriod`; `notify:false` em todo evento manual |
 | `backend/internal/infrastructure/messaging/consumer.go` | `resolveTargetDays`, `indexPunchesByDay`, `auditDay` (1 relatório por dia do período); `notifyStaffs` condicionado a `payload.Notify` |
 | `backend/internal/infrastructure/secullum/client.go` | `GetDailyPunchesRange` (nova); `GetDailyPunches` delega para ela |

@@ -173,40 +173,45 @@ func TestProcessRules_IntervaloDe15MinutosEmJornadaLongaInfringe(t *testing.T) {
 	}
 }
 
-// Domingo com carga prevista acima de 6h (trabalho extraordinário de duração variável):
-// a regra graduada exigiria 60min, mas no domingo o piso é sempre 15min.
-func TestProcessRules_DomingoIntervaloMinimoFlat15min(t *testing.T) {
+// Domingo não tem intervalo mínimo graduado: qualquer pausa registrada, por menor que
+// seja, já conta como almoço feito e não pode infringir.
+func TestProcessRules_DomingoComPausaCurtaNaoInfringe(t *testing.T) {
 	s := NewAuditorService()
 	domingo := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC) // domingo
 	punch := &domain.DailyPunch{
 		Date:      domingo,
 		Previstas: pairs("08:00", "12:00", "13:00", "17:30"), // 8h30 previstas -> exigiria 60min num dia comum
-		Marcacoes: pairs("08:00", "12:00", "12:20", "18:00"), // intervalo de 20min
+		Marcacoes: pairs("08:00", "12:00", "12:14", "18:00"), // intervalo de só 14min
 	}
 	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
 	if err != nil {
 		t.Fatalf("erro inesperado: %v", err)
 	}
 	if got, ok := findByType(inc, TipoAlmocoReduzido); ok {
-		t.Errorf("domingo exige só 15min de intervalo; 20min não deveria infringir: %q", got.Description)
+		t.Errorf("domingo não tem piso mínimo de intervalo; 14min já conta como almoço feito: %q", got.Description)
 	}
 }
 
-// Domingo com intervalo abaixo dos 15min mínimos continua gerando ocorrência.
-func TestProcessRules_DomingoIntervaloAbaixoDe15MinInfringe(t *testing.T) {
+// Domingo sem NENHUM intervalo registrado (turno corrido) gera ocorrência, mas sempre
+// como ALERTA — nunca CRÍTICO, mesmo com a severidade do tenant configurada como CRITICO.
+func TestProcessRules_DomingoSemPausaInfringeComoAlerta(t *testing.T) {
 	s := NewAuditorService()
 	domingo := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC) // domingo
 	punch := &domain.DailyPunch{
 		Date:      domingo,
-		Previstas: pairs("08:00", "09:00", "09:15", "14:15"), // 6h
-		Marcacoes: pairs("08:00", "09:00", "09:10", "14:10"), // intervalo de só 10min
+		Previstas: pairs("08:00", "14:00"), // 6h previstas, bloco único
+		Marcacoes: pairs("08:00", "14:00"), // turno corrido, sem nenhuma pausa
 	}
 	inc, err := s.ProcessRules(allEnabled(), &domain.Collaborator{ID: 1}, punch, nil, time.Now(), true)
 	if err != nil {
 		t.Fatalf("erro inesperado: %v", err)
 	}
-	if _, ok := findByType(inc, TipoAlmocoReduzido); !ok {
-		t.Fatalf("domingo com só 10min de intervalo deveria infringir o piso de 15min, veio %+v", inc)
+	got, ok := findByType(inc, TipoAlmocoReduzido)
+	if !ok {
+		t.Fatalf("domingo sem nenhuma pausa deveria infringir, veio %+v", inc)
+	}
+	if got.Severity != domain.SeverityAlert {
+		t.Errorf("domingo nunca deve gerar Almoço Reduzido CRÍTICO, veio %q", got.Severity)
 	}
 }
 
