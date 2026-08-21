@@ -24,10 +24,13 @@ type EventPublisher interface {
 //  1. A auditoria diária de fechamento, no horário que o tenant configurou
 //     (TenantSettings.Horario, aba Avisos do painel) — no máximo uma vez por dia por
 //     tenant. É a ÚNICA que notifica o WhatsApp dos gestores (`notify: true`).
-//  2. Uma atualização silenciosa de hora em hora (`notify: false`), reauditando o mesmo
-//     fechamento de D-1 para capturar correções feitas na Secullum depois do fechamento
-//     original (ex.: RH ajustou uma batida) — sem repetir o alerta no WhatsApp a cada
-//     hora, que treinaria o gestor a ignorá-lo.
+//  2. Uma atualização silenciosa de hora em hora (`notify: false`), reauditando o MÊS
+//     ATUAL inteiro até o último dia encerrado (D-1) — não só D-1 — para capturar
+//     correções feitas na Secullum a qualquer momento do mês corrente (ex.: RH ajustou
+//     uma batida do dia 3, e hoje é dia 15), sem repetir o alerta no WhatsApp a cada
+//     hora, que treinaria o gestor a ignorá-lo. O período inteiro é buscado numa única
+//     chamada à Secullum (ver `SecullumService.GetDailyPunchesRange`) e depois separado
+//     por dia — a mesma otimização que a auditoria de período sob demanda já usa.
 //
 // Nenhuma delas é um motor de auditoria novo: publicam o MESMO payload que o handler HTTP
 // (POST /api/v1/audit/trigger) publica na fila `audit.trigger`, com o campo `notify`
@@ -131,24 +134,47 @@ func (s *SchedulerService) trigger(tenantID int) {
 	s.publish(tenantID, "cron_job", true, "auditoria automática enfileirada (horário configurado)")
 }
 
-// hourlyTick reaudita silenciosamente o fechamento de D-1 de CADA tenant ativo, de hora
-// em hora — mantém os dados (relatórios/ocorrências) atualizados com correções feitas na
-// Secullum depois do fechamento original, sem depender do próximo disparo diário. Não usa
-// claimForToday: roda em toda hora cheia, o dia inteiro, independente do horário
-// configurado (que continua sendo o único disparo que notifica).
+// hourlyTick reaudita silenciosamente o MÊS ATUAL (do dia 1 até o último dia encerrado)
+// de CADA tenant ativo, de hora em hora — mantém os dados (relatórios/ocorrências)
+// atualizados com correções feitas na Secullum a qualquer momento do mês corrente, sem
+// depender do próximo disparo diário. Não usa claimForToday: roda em toda hora cheia, o
+// dia inteiro, independente do horário configurado (que continua sendo o único disparo
+// que notifica).
+//
+// Publica um único evento de PERÍODO por tenant (start_date/end_date) — é o
+// AuditConsumer quem busca o mês inteiro numa única chamada à Secullum e separa por dia
+// ao salvar (a mesma otimização da auditoria de período sob demanda), evitando 1
+// requisição por dia e o risco de rate limiting.
 func (s *SchedulerService) hourlyTick() {
 	tenants, err := s.tenantRepo.GetActiveTenants()
 	if err != nil {
 		log.Printf("[Agendador] falha ao listar tenants ativos para atualização horária: %v\n", err)
 		return
 	}
+	start, end := monthToDateRange(time.Now())
 	for _, tenant := range tenants {
-		s.publish(tenant.ID, "hourly_refresh", false, "atualização horária silenciosa enfileirada")
+		s.publishRange(tenant.ID, start, end, "hourly_refresh", "atualização horária silenciosa do mês corrente enfileirada")
 	}
 }
 
-// publish monta e envia o payload de auditoria automática, com `notify` controlando se o
-// AuditConsumer deve enfileirar o resumo no WhatsApp ao final (ver consumer.go).
+// monthToDateRange devolve [dia 1, último dia encerrado] do mês corrente — o período que
+// a atualização horária audita. Ex.: hoje é dia 15 => [dia 1, dia 14] do mesmo mês.
+//
+// Usa o mês do último dia ENCERRADO (ontem), não o de hoje: no dia 1 de um mês, "ontem" é
+// o último dia do mês anterior, e é esse mês que ainda não teve nenhum dia encerrado
+// dentro do mês corrente — sem este ajuste, o intervalo ficaria vazio/inválido
+// (start=dia 1 de hoje > end=ontem) bem no dia em que a virada de mês mais precisa ser
+// conferida.
+func monthToDateRange(now time.Time) (time.Time, time.Time) {
+	end := domain.DayOf(now).AddDate(0, 0, -1) // último dia encerrado (D-1)
+	start := time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, end.Location())
+	return start, end
+}
+
+// publish monta e envia o payload de auditoria automática de UM DIA (D-1), com `notify`
+// controlando se o AuditConsumer deve enfileirar o resumo no WhatsApp ao final (ver
+// consumer.go). Usado só pela auditoria diária de fechamento (`trigger`) — a atualização
+// horária usa `publishRange`.
 func (s *SchedulerService) publish(tenantID int, triggeredBy string, notify bool, logMsg string) {
 	payload, err := json.Marshal(map[string]interface{}{
 		"tenant_id":    tenantID,
@@ -166,4 +192,28 @@ func (s *SchedulerService) publish(tenantID int, triggeredBy string, notify bool
 	}
 
 	log.Printf("[Agendador] Tenant %d: %s.\n", tenantID, logMsg)
+}
+
+// publishRange monta e envia o payload de auditoria automática de um PERÍODO
+// (start_date/end_date) — sempre com `notify: false`: nenhuma atualização automática de
+// período notifica o WhatsApp, só a diária de fechamento (`publish`/`trigger`).
+func (s *SchedulerService) publishRange(tenantID int, start, end time.Time, triggeredBy, logMsg string) {
+	payload, err := json.Marshal(map[string]interface{}{
+		"tenant_id":    tenantID,
+		"start_date":   start.Format("2006-01-02"),
+		"end_date":     end.Format("2006-01-02"),
+		"triggered_by": triggeredBy,
+		"notify":       false,
+	})
+	if err != nil {
+		log.Printf("[Agendador] Tenant %d: falha ao serializar evento de período: %v\n", tenantID, err)
+		return
+	}
+
+	if err := s.publisher.Publish(context.Background(), "audit.trigger", payload); err != nil {
+		log.Printf("[Agendador] Tenant %d: falha ao enfileirar auditoria automática de período: %v\n", tenantID, err)
+		return
+	}
+
+	log.Printf("[Agendador] Tenant %d: %s (%s a %s).\n", tenantID, logMsg, start.Format("2006-01-02"), end.Format("2006-01-02"))
 }

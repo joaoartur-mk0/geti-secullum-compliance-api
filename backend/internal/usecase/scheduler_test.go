@@ -182,6 +182,26 @@ func TestScheduler_HourlyTickPublicaNotifyFalse(t *testing.T) {
 	}
 }
 
+// A atualização horária audita o MÊS CORRENTE inteiro (até o último dia encerrado), não
+// mais um único dia: o payload carrega start_date/end_date em vez de date.
+func TestScheduler_HourlyTickPublicaPeriodoDoMes(t *testing.T) {
+	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
+	pub := &fakePublisher{}
+	s := NewSchedulerService(repo, pub)
+
+	s.hourlyTick()
+
+	if len(pub.calls) != 1 {
+		t.Fatalf("esperava 1 chamada, veio %d", len(pub.calls))
+	}
+	if !strings.Contains(pub.calls[0], `"start_date"`) || !strings.Contains(pub.calls[0], `"end_date"`) {
+		t.Errorf("esperava start_date/end_date (período) no payload da atualização horária, veio %s", pub.calls[0])
+	}
+	if strings.Contains(pub.calls[0], `"date":"`) {
+		t.Errorf("atualização horária não deveria mais publicar um único `date`, veio %s", pub.calls[0])
+	}
+}
+
 // A atualização horária não usa claimForToday: pode disparar de novo mesmo no mesmo dia
 // (é o comportamento esperado, ao contrário da varredura diária).
 func TestScheduler_HourlyTickNaoTemLimiteDiario(t *testing.T) {
@@ -194,6 +214,44 @@ func TestScheduler_HourlyTickNaoTemLimiteDiario(t *testing.T) {
 
 	if got := pub.count(); got != 2 {
 		t.Fatalf("esperava 2 disparos (1 por chamada), veio %d", got)
+	}
+}
+
+// Exemplo do pedido: hoje é dia 15 => audita do dia 01 até o dia 14 (o último encerrado).
+func TestMonthToDateRange_MeioDoMes(t *testing.T) {
+	now := time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC)
+	start, end := monthToDateRange(now)
+	if got := start.Format("2006-01-02"); got != "2026-07-01" {
+		t.Errorf("start = %s, quer 2026-07-01", got)
+	}
+	if got := end.Format("2006-01-02"); got != "2026-07-14" {
+		t.Errorf("end = %s, quer 2026-07-14", got)
+	}
+}
+
+// No 2º dia do mês, só o dia 1 está encerrado — período de um único dia.
+func TestMonthToDateRange_SegundoDiaDoMes(t *testing.T) {
+	now := time.Date(2026, 7, 2, 3, 0, 0, 0, time.UTC)
+	start, end := monthToDateRange(now)
+	if got := start.Format("2006-01-02"); got != "2026-07-01" {
+		t.Errorf("start = %s, quer 2026-07-01", got)
+	}
+	if got := end.Format("2006-01-02"); got != "2026-07-01" {
+		t.Errorf("end = %s, quer 2026-07-01", got)
+	}
+}
+
+// No dia 1 de um mês, "ontem" pertence ao mês ANTERIOR — sem cair num intervalo vazio, o
+// período cobre o mês anterior inteiro (dia 1 até o último dia dele), que é o mês cujo
+// fechamento mais precisa ser conferido bem na virada.
+func TestMonthToDateRange_PrimeiroDiaDoMesCobreMesAnteriorInteiro(t *testing.T) {
+	now := time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC)
+	start, end := monthToDateRange(now)
+	if got := start.Format("2006-01-02"); got != "2026-07-01" {
+		t.Errorf("start = %s, quer 2026-07-01", got)
+	}
+	if got := end.Format("2006-01-02"); got != "2026-07-31" {
+		t.Errorf("end = %s, quer 2026-07-31", got)
 	}
 }
 

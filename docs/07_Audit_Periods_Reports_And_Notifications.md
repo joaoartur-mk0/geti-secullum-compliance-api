@@ -162,15 +162,42 @@ API. Um cliente HTTP não tem como pedir notificação.
 
 ### Rotina horária de atualização silenciosa
 
-`SchedulerService.Start` agora roda **dois** tickers: o de sempre (30s, checa o horário
-diário configurado por tenant) e um novo de **1 hora**
-(`hourlyTick`). A cada hora cheia, para **todo tenant ativo**, publica uma auditoria
-silenciosa (`notify: false`) do fechamento de D-1 — sem `date`/`start_date`/`end_date`,
-igual à varredura automática de sempre.
+`SchedulerService.Start` roda **dois** tickers: o de sempre (30s, checa o horário diário
+configurado por tenant) e um de **1 hora** (`hourlyTick`).
 
-Isso mantém relatórios e ocorrências atualizados com correções feitas na Secullum depois
-do fechamento original (ex.: RH ajustou uma batida às 10h da manhã), sem esperar até o
-próximo dia — e sem repetir o alerta no WhatsApp a cada hora.
+**Mudou o alcance da atualização horária.** Na primeira versão, cada hora cheia reauditava
+só o fechamento de D-1 (um `date`, igual à varredura diária). Isso deixava uma lacuna: uma
+correção feita na Secullum num dia mais antigo do mês (ex.: RH ajusta a batida do dia 3, e
+hoje já é dia 15) só seria capturada de novo na próxima varredura diária daquele dia
+específico — que não existe, porque a diária só audita D-1.
+
+Agora `hourlyTick`, a cada hora cheia, para **todo tenant ativo**, publica uma auditoria
+silenciosa (`notify: false`) do **mês corrente inteiro, do dia 1 até o último dia
+encerrado** — não mais um único dia:
+
+```go
+start, end := monthToDateRange(time.Now()) // ex.: hoje dia 15 => [dia 01, dia 14]
+for _, tenant := range tenants {
+    s.publishRange(tenant.ID, start, end, "hourly_refresh", "...")
+}
+```
+
+`monthToDateRange` usa o mês do último dia **encerrado** (ontem), não o de hoje: no dia 1
+de um mês, "ontem" cai no mês anterior, e é esse mês que fica coberto inteiro (dia 1 até o
+último dia dele) — em vez de produzir um intervalo vazio/inválido bem na virada de mês, que
+é justamente quando checar o fechamento anterior mais importa.
+
+O payload publicado é o mesmo formato de uma auditoria de período sob demanda
+(`start_date`/`end_date`, `notify: false`) — é o `AuditConsumer` (seção 2) quem busca o mês
+inteiro **numa única chamada** à Secullum (`GetDailyPunchesRange`) e separa por dia ao
+salvar, exatamente como uma auditoria de período manual. Nenhuma lógica nova no worker: a
+mudança é só o que o `SchedulerService` publica.
+
+> **Custo a observar:** cada hora agora grava até ~30 `Report`s por tenant (um por dia já
+> decorrido no mês), não mais 1. Em `GET /reports` isso não aparece (só a mais recente por
+> dia é devolvida), mas `GET /reports/history` cresce mais rápido — se o volume incomodar,
+> um candidato natural é rotina de limpeza/retenção do histórico, não implementada nesta
+> rodada.
 
 Diferença importante para `tick` (diário): `hourlyTick` **não usa `claimForToday`** — pode
 disparar várias vezes no mesmo dia, de propósito (é o comportamento esperado; só o disparo
@@ -179,7 +206,10 @@ diário tem o limite de "uma vez por dia").
 Testes: `TestScheduler_TickPublicaNotifyTrue`,
 `TestScheduler_HourlyTickDisparaParaTodosOsAtivos`,
 `TestScheduler_HourlyTickPublicaNotifyFalse`,
-`TestScheduler_HourlyTickNaoTemLimiteDiario`.
+`TestScheduler_HourlyTickPublicaPeriodoDoMes`,
+`TestScheduler_HourlyTickNaoTemLimiteDiario`,
+`TestMonthToDateRange_MeioDoMes`, `TestMonthToDateRange_SegundoDiaDoMes`,
+`TestMonthToDateRange_PrimeiroDiaDoMesCobreMesAnteriorInteiro`.
 
 ---
 
@@ -236,7 +266,7 @@ nenhum filtro está ativo — preset "Tudo").
 | `backend/internal/infrastructure/database/repositories/report_repository.go` | `ListLatestByTenant` (dedupe em memória) além de `ListByTenant` (histórico), ambos com `start`/`end` opcionais |
 | `backend/internal/interface/http/handlers/report_handler.go` | `List` (latest) e `History` (novo handler), `reportDateRange` compartilhado |
 | `backend/internal/interface/http/router.go` | Rota nova `GET /tenants/:id/reports/history` |
-| `backend/internal/usecase/scheduler.go` | Segundo ticker (`hourlyTick`, 1h); `notify:true` só no disparo diário; `publish` compartilhado |
+| `backend/internal/usecase/scheduler.go` | Segundo ticker (`hourlyTick`, 1h) audita o MÊS CORRENTE até D-1 (`monthToDateRange`, `publishRange`), não mais só D-1; `notify:true` só no disparo diário (`publish`) |
 | `backend/internal/interface/http/swagger/openapi.yaml` | `TriggerRequest` (`start_date`/`end_date`), `/audit/trigger` (nota sobre `notify`), `/reports` e `/reports/history` |
 | `frontend/src/lib/api.ts` | `triggerAuditRange`; `listReports`/`listReportHistory` com filtro `start_date`/`end_date` |
 | `frontend/src/pages/ReportsHistory.tsx` | Nova página (substitui `LogsHistorico.tsx`), consome `/reports/history`, filtro De/Até |
