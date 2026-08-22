@@ -140,7 +140,7 @@ export default function Colaboradores() {
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Buscar por nome ou nº"
+                placeholder="Buscar por nome ou ID Secullum"
                 aria-label="Buscar colaborador"
                 className="w-full pl-9"
               />
@@ -189,7 +189,7 @@ function CollaboratorRow({
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium text-ink">{collaborator.name || `Colaborador ${collaborator.secullum_id}`}</p>
           <p className="text-xs text-ink-faint">
-            nº {collaborator.secullum_id}
+            ID Secullum {collaborator.secullum_id}
             {summary.totalCount > 0 && (
               <span className="text-ink-soft">
                 {' · '}
