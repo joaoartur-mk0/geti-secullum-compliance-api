@@ -26,12 +26,12 @@ import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
 import { formatDate, formatDateTime, formatPhone } from '../lib/format'
 import { findLink, MISSING_PAYROLL, setFilial } from '../lib/lotacao'
-import type { Branch, Collaborator, CollaboratorPrefill, Occurrence } from '../lib/types'
+import type { Branch, CollaboratorHistoryEntry, CollaboratorPrefill, Occurrence } from '../lib/types'
 
 const ALL_STATES = ['aberta', 'atualizada', 'resolvida_automatica', 'resolvida_manual'] as const
 
 interface Data {
-  collaborator: Collaborator | null
+  collaborator: CollaboratorHistoryEntry | null
   occurrences: Occurrence[]
 }
 
@@ -56,8 +56,11 @@ export default function ColaboradorHistorico() {
       .then(setPrefill)
       .catch(() => setPrefill(null))
     try {
+      // Histórico completo (não só ativos): a página individual precisa continuar
+      // acessível para quem foi desligado — é aqui que o gestor confere a última
+      // ocorrência dele antes do desligamento.
       const [{ collaborators }, { occurrences }] = await Promise.all([
-        api.listCollaborators(tenant.id),
+        api.listCollaboratorsHistory(tenant.id),
         api.listOccurrences(tenant.id, { collaborator_id: secullumId, state: [...ALL_STATES] }),
       ])
       const collaborator = collaborators.find((c) => c.secullum_id === secullumId) ?? null
@@ -139,6 +142,7 @@ function Detail({
         <p className="mt-1 text-sm text-ink-soft">
           ID Secullum {secullumId}
           {prefill?.collaborator.numero_folha && ` · folha ${prefill.collaborator.numero_folha}`}
+          {collaborator?.demitido && collaborator.demissao && ` · desligado em ${formatDate(collaborator.demissao)}`}
           {collaborator == null && ' · não consta mais entre os sincronizados'}
         </p>
       </header>

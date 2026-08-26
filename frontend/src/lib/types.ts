@@ -82,10 +82,24 @@ export interface Report {
 }
 
 // Colaborador sincronizado (espelho local do tenant, via GET /tenants/:id/collaborators).
+// Este endpoint só devolve ATIVOS (sem Demissao) — para o histórico completo (ativos +
+// demitidos), ver CollaboratorHistoryEntry / GET /collaborators/history.
 export interface Collaborator {
   id: number
   secullum_id: number
   name: string
+}
+
+// Item de GET /tenants/:id/collaborators/history — todos os colaboradores já
+// sincronizados do tenant, com admissão/demissão. admissao/demissao vêm como "YYYY-MM-DD"
+// ou null.
+export interface CollaboratorHistoryEntry {
+  id: number
+  secullum_id: number
+  name: string
+  admissao: string | null
+  demissao: string | null
+  demitido: boolean
 }
 
 // ---------- Ocorrências (máquina de estados) ----------
@@ -147,6 +161,17 @@ export interface OccurrenceEvent {
   reason: string
   actor_user_id: number | null
   created_at: string
+}
+
+// ---------- Equipamentos (relógios de ponto, espelho da Secullum) ----------
+
+// Somente leitura: o cadastro vive na Secullum, sincronizado por
+// usecase.SynchronizerService.SyncEquipment (ver GET /tenants/:id/equipamentos).
+export interface Equipment {
+  id: number
+  secullum_id: number
+  descricao: string
+  endereco_ip: string | null
 }
 
 // ---------- Filiais ----------

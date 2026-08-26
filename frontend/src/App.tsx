@@ -6,6 +6,7 @@ import Avisos from './pages/Avisos'
 import ColaboradorHistorico from './pages/ColaboradorHistorico'
 import Colaboradores from './pages/Colaboradores'
 import Empresa from './pages/Empresa'
+import Equipamentos from './pages/Equipamentos'
 import Filiais from './pages/Filiais'
 import Gestores from './pages/Gestores'
 import Incidentes from './pages/Incidentes'
@@ -28,6 +29,7 @@ export default function App() {
             <Route path="colaboradores" element={<Colaboradores />} />
             <Route path="colaboradores/:secullumId" element={<ColaboradorHistorico />} />
             <Route path="filiais" element={<Filiais />} />
+            <Route path="equipamentos" element={<Equipamentos />} />
             <Route path="gestores" element={<Gestores />} />
             <Route path="avisos" element={<Avisos />} />
             <Route path="whatsapp" element={<WhatsApp />} />

@@ -8,9 +8,11 @@ import type {
   BranchPayrollNumberRequest,
   BranchRequest,
   Collaborator,
+  CollaboratorHistoryEntry,
   CollaboratorPrefill,
   CreateTenantRequest,
   CreateWarningRequest,
+  Equipment,
   HealthResponse,
   LoginRequest,
   LoginResponse,
@@ -142,6 +144,14 @@ export const api = {
 
   getTenant: (id: number) => request<{ tenant: Tenant }>(`/api/v1/tenants/${id}`).then((r) => r.tenant),
 
+  // POST /tenants/:id/sync: reenfileira a sincronização de colaboradores E equipamentos
+  // (fila tenant.provisioning) — assíncrono, o resultado só aparece ao recarregar a lista
+  // depois de alguns instantes. Botão "Ressincronizar" em Colaboradores/Equipamentos.
+  syncTenant: (id: number) =>
+    request<{ message: string; tenant_id: number; status: string }>(`/api/v1/tenants/${id}/sync`, {
+      method: 'POST',
+    }),
+
   updateTenant: (id: number, body: { name: string; secullum_database_id: number }) =>
     request<{ message: string }>(`/api/v1/tenants/${id}`, {
       method: 'PUT',
@@ -230,9 +240,16 @@ export const api = {
       `/api/v1/tenants/${tenantId}/reports/history${reportDateQuery(filters)}`,
     ).then((r) => r.reports ?? []),
 
+  // Só ativos (sem Demissao) — ver listCollaboratorsHistory para o histórico completo.
   listCollaborators: (tenantId: number) =>
     request<{ collaborators: Collaborator[] | null; total: number }>(
       `/api/v1/tenants/${tenantId}/collaborators`,
+    ).then((r) => ({ collaborators: r.collaborators ?? [], total: r.total ?? 0 })),
+
+  // Todos os colaboradores já sincronizados do tenant, ativos e demitidos.
+  listCollaboratorsHistory: (tenantId: number) =>
+    request<{ collaborators: CollaboratorHistoryEntry[] | null; total: number }>(
+      `/api/v1/tenants/${tenantId}/collaborators/history`,
     ).then((r) => ({ collaborators: r.collaborators ?? [], total: r.total ?? 0 })),
 
   getWhatsappStatus: (tenantId: number) =>
@@ -291,6 +308,13 @@ export const api = {
     request<CollaboratorPrefill>(
       `/api/v1/tenants/${tenantId}/collaborators/${secullumId}/prefill${date ? `?date=${date}` : ''}`,
     ),
+
+  // ---------- Equipamentos (somente leitura, espelho da Secullum) ----------
+
+  listEquipamentos: (tenantId: number) =>
+    request<{ equipamentos: Equipment[] | null; total: number }>(
+      `/api/v1/tenants/${tenantId}/equipamentos`,
+    ).then((r) => ({ equipamentos: r.equipamentos ?? [], total: r.total ?? 0 })),
 
   // ---------- Filiais ----------
 
