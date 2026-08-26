@@ -36,11 +36,13 @@ func NewTenantHandler(repo domain.TenantRepository, userTenantRepo domain.UserTe
 	return &TenantHandler{tenantRepo: repo, userTenantRepo: userTenantRepo, publisher: publisher}
 }
 
-// publishProvisioning enfileira o pedido de sincronização de colaboradores do tenant.
-// Usa um contexto próprio (não o da requisição HTTP) com um timeout curto, pois a
-// publicação deve seguir mesmo que a resposta HTTP já tenha sido enviada, e falha ao
-// publicar não desfaz o cadastro/gatilho já concluído: fica só registrada em log,
-// já que o usuário ainda pode sincronizar depois via POST /tenants/:id/sync.
+// publishProvisioning enfileira o pedido de sincronização do tenant — colaboradores E
+// equipamentos, ambos processados pelo mesmo worker (ver
+// messaging.ProvisioningConsumer.processMessage). Usa um contexto próprio (não o da
+// requisição HTTP) com um timeout curto, pois a publicação deve seguir mesmo que a
+// resposta HTTP já tenha sido enviada, e falha ao publicar não desfaz o cadastro/gatilho
+// já concluído: fica só registrada em log, já que o usuário ainda pode sincronizar depois
+// via POST /tenants/:id/sync.
 func (h *TenantHandler) publishProvisioning(tenantID int) {
 	payload, err := json.Marshal(map[string]int{"tenant_id": tenantID})
 	if err != nil {
@@ -113,9 +115,10 @@ func (h *TenantHandler) Create(c *gin.Context) {
 }
 
 // Sync — POST /api/v1/tenants/:id/sync
-// Reenfileira a sincronização de colaboradores sob demanda (ex.: após alterações no
-// cadastro de funcionários na Secullum, ou para popular colaboradores de um tenant
-// já existente que ainda não foi sincronizado).
+// Reenfileira a sincronização de colaboradores e equipamentos sob demanda (ex.: após
+// alterações no cadastro de funcionários/aparelhos na Secullum, ou para popular um tenant
+// já existente que ainda não foi sincronizado). Botão "Ressincronizar" nas telas de
+// Colaboradores e Equipamentos do painel.
 func (h *TenantHandler) Sync(c *gin.Context) {
 	const op = "TenantHandler.Sync"
 
@@ -128,7 +131,7 @@ func (h *TenantHandler) Sync(c *gin.Context) {
 	h.publishProvisioning(id)
 
 	c.JSON(http.StatusAccepted, gin.H{
-		"message":   "sincronização de colaboradores enfileirada com sucesso",
+		"message":   "sincronização de colaboradores e equipamentos enfileirada com sucesso",
 		"tenant_id": id,
 		"status":    "processing",
 	})

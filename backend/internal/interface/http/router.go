@@ -35,6 +35,8 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 	occurrenceRepo := repositories.NewOccurrenceRepository(db)
 	branchRepo := repositories.NewBranchRepository(db)
 	warningRepo := repositories.NewWarningRepository(db)
+	equipRepo := repositories.NewEquipmentRepository(db)
+	punchRecordRepo := repositories.NewPunchRecordRepository(db)
 
 	// Resolvedor de filial (aparelho da batida, com fallback pelo nº de folha).
 	branchResolver := usecase.NewBranchResolverService(branchRepo)
@@ -48,12 +50,13 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 	staffHandler := handlers.NewStaffHandler(staffRepo, userTenantRepo)
 	settingsHandler := handlers.NewSettingsHandler(tenantRepo)
 	reportHandler := handlers.NewReportHandler(reportRepo)
-	collaboratorHandler := handlers.NewCollaboratorHandler(collaboratorRepo, tenantRepo, branchResolver, secullumSvc)
+	collaboratorHandler := handlers.NewCollaboratorHandler(collaboratorRepo, tenantRepo, branchResolver, secullumSvc, punchRecordRepo)
 	whatsappHandler := handlers.NewWhatsAppHandler(whatsappMgr, whatsappPrefix)
 	userHandler := handlers.NewUserHandler(userRepo, userTenantRepo)
 	occurrenceHandler := handlers.NewOccurrenceHandler(occurrenceRepo, collaboratorRepo, tenantRepo, userTenantRepo, branchResolver, secullumSvc)
 	branchHandler := handlers.NewBranchHandler(branchRepo, userTenantRepo)
 	warningHandler := handlers.NewWarningHandler(warningRepo, collaboratorRepo, userTenantRepo)
+	equipmentHandler := handlers.NewEquipmentHandler(equipRepo)
 
 	// Login é a única rota de /api/v1 pública: sem token não há como obter um, e o
 	// cadastro de novos usuários (register) passa a exigir um super admin autenticado.
@@ -154,14 +157,22 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 			tenantScoped.GET("/branches", branchHandler.List)
 			tenantScoped.POST("/branches", branchHandler.Create)
 
+			// Equipamentos (relógios de ponto) sincronizados do tenant — somente leitura.
+			tenantScoped.GET("/equipamentos", equipmentHandler.List)
+
 			// Advertências do tenant
 			tenantScoped.GET("/warnings", warningHandler.List)
 			tenantScoped.POST("/warnings", warningHandler.Create)
 
-			// Colaboradores sincronizados (espelho local do tenant)
+			// Colaboradores sincronizados (espelho local do tenant) — só ativos
 			tenantScoped.GET("/collaborators", collaboratorHandler.List)
+			// Histórico completo (ativos + demitidos)
+			tenantScoped.GET("/collaborators/history", collaboratorHandler.History)
 			// Autopreenchimento da tela de colaborador: horário fixo (Secullum) + filial.
 			tenantScoped.GET("/collaborators/:secullumId/prefill", collaboratorHandler.Prefill)
+			// Enriquecimento de equipamento/motivo por dia (cruzado com FonteDados na
+			// auditoria) — ?start_date=&end_date= (ambos obrigatórios).
+			tenantScoped.GET("/collaborators/:secullumId/punch-records", collaboratorHandler.PunchRecords)
 
 			// WhatsApp (instância da Evolution API por tenant)
 			tenantScoped.GET("/whatsapp/status", whatsappHandler.Status)
