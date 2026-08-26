@@ -16,6 +16,7 @@ import {
   ErrorNote,
   Field,
   OccurrenceStateBadge,
+  Select,
   SeverityBadge,
   Skeleton,
   useToast,
@@ -23,8 +24,9 @@ import {
 import WarningPanel from '../components/WarningPanel'
 import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
-import { formatDate, formatDateTime } from '../lib/format'
-import type { Collaborator, CollaboratorPrefill, Occurrence } from '../lib/types'
+import { formatDate, formatDateTime, formatPhone } from '../lib/format'
+import { findLink, MISSING_PAYROLL, setFilial } from '../lib/lotacao'
+import type { Branch, Collaborator, CollaboratorPrefill, Occurrence } from '../lib/types'
 
 const ALL_STATES = ['aberta', 'atualizada', 'resolvida_automatica', 'resolvida_manual'] as const
 
@@ -131,8 +133,12 @@ function Detail({
     <>
       <header className="mt-4">
         <h1 className="text-2xl font-semibold tracking-tight">{name}</h1>
+        {/* Os dois números são diferentes e já foram confundidos: o da Secullum identifica
+            a pessoa nas telas, o de folha é o que lota numa filial. Nomear cada um evita
+            que o de cima seja digitado no campo do de baixo. */}
         <p className="mt-1 text-sm text-ink-soft">
-          nº {secullumId}
+          ID Secullum {secullumId}
+          {prefill?.collaborator.numero_folha && ` · folha ${prefill.collaborator.numero_folha}`}
           {collaborator == null && ' · não consta mais entre os sincronizados'}
         </p>
       </header>
@@ -161,7 +167,7 @@ function Detail({
         />
       </section>
 
-      <PrefillPanel prefill={prefill} />
+      <PrefillPanel prefill={prefill} onLinked={onChanged} />
 
       <section aria-label="Histórico de ocorrências" className="mt-8">
         <h2 className="mb-3 text-sm font-semibold text-ink-soft">Histórico de ocorrências</h2>
@@ -191,10 +197,9 @@ function Detail({
 
 // ---------- Autopreenchimento ----------
 
-function PrefillPanel({ prefill }: { prefill: CollaboratorPrefill | null }) {
+function PrefillPanel({ prefill, onLinked }: { prefill: CollaboratorPrefill | null; onLinked: () => void }) {
   if (!prefill) return null
-  const { horario_fixo, filial } = prefill
-  if (horario_fixo.length === 0 && !filial) return null
+  const { horario_fixo } = prefill
 
   return (
     <section aria-label="Autopreenchimento" className="mt-6 grid gap-3 sm:grid-cols-2">
@@ -220,33 +225,111 @@ function PrefillPanel({ prefill }: { prefill: CollaboratorPrefill | null }) {
         )}
       </div>
 
-      <div className="rounded-card border border-line bg-bg p-4 shadow-card">
-        <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-ink-soft">
-          <Building2 size={15} aria-hidden />
-          Filial
-        </p>
-        {!filial ? (
-          <p className="text-sm text-ink-faint">
-            Não foi possível resolver a filial — vincule o aparelho ou o nº de folha em Filiais.
-          </p>
-        ) : (
-          <div className="text-sm">
-            <p className="font-medium text-ink">{filial.name}</p>
-            <p className="text-ink-soft">
-              {filial.manager_name || 'Sem gestor cadastrado'}
-              {filial.manager_phone && ` · ${filial.manager_phone}`}
-            </p>
-            <p className="mt-1 text-xs text-ink-faint">
-              {filial.source === 'aparelho'
-                ? 'Confirmado pelo aparelho da última batida'
-                : filial.source === 'numero_folha'
-                  ? 'Inferido pelo nº de folha'
-                  : ''}
-            </p>
-          </div>
-        )}
-      </div>
+      <BranchCard prefill={prefill} onLinked={onLinked} />
     </section>
+  )
+}
+
+// BranchCard deixa lotar o colaborador direto daqui, em vez de obrigar a anotar o nº de
+// folha e ir cadastrá-lo na tela de Filiais.
+//
+// O vínculo continua sendo gravado como nº de folha (é o que o backend resolve): o número
+// usado é o `numero_folha` que o próprio prefill trouxe, nunca um digitado à mão — foi
+// justamente a digitação manual que colocou um id da Secullum no lugar da folha.
+function BranchCard({ prefill, onLinked }: { prefill: CollaboratorPrefill; onLinked: () => void }) {
+  const { tenant } = useTenant()
+  const toast = useToast()
+  const [branches, setBranches] = useState<Branch[] | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const numeroFolha = prefill.collaborator.numero_folha ?? ''
+  const filial = prefill.filial
+
+  useEffect(() => {
+    let alive = true
+    api
+      .listBranches(tenant.id)
+      .then((list) => alive && setBranches(list))
+      .catch(() => alive && setBranches([]))
+    return () => {
+      alive = false
+    }
+  }, [tenant.id])
+
+  // A filial resolvida pelo APARELHO não vem de um vínculo de nº de folha, então o select
+  // não pode fingir que ela é a lotação cadastrada. Nesse caso a origem manda, e o que o
+  // select mostra é o vínculo real (que pode não existir).
+  const linked = branches ? findLink(branches, numeroFolha) : null
+
+  async function change(value: string) {
+    if (!branches) return
+    setSaving(true)
+    try {
+      await setFilial(numeroFolha, value ? Number(value) : null, branches)
+      toast('success', value ? 'Colaborador lotado na filial.' : 'Colaborador desvinculado da filial.')
+      setBranches(await api.listBranches(tenant.id))
+      onLinked()
+    } catch (error) {
+      toast('error', error instanceof ApiError ? error.message : 'Falha ao alterar a filial.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="rounded-card border border-line bg-bg p-4 shadow-card">
+      <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-ink-soft">
+        <Building2 size={15} aria-hidden />
+        Filial
+      </p>
+
+      {branches === null ? (
+        <Skeleton className="h-9 w-full" />
+      ) : branches.length === 0 ? (
+        <p className="text-sm text-ink-faint">
+          Nenhuma filial cadastrada.{' '}
+          <Link to="/filiais" className="font-semibold text-brand underline underline-offset-2">
+            Cadastrar filiais
+          </Link>
+        </p>
+      ) : !numeroFolha ? (
+        <p className="text-sm text-ink-faint">{MISSING_PAYROLL}</p>
+      ) : (
+        <Select
+          aria-label="Filial do colaborador"
+          value={linked ? String(linked.branchId) : ''}
+          disabled={saving}
+          onChange={(e) => void change(e.target.value)}
+        >
+          <option value="">Sem filial</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </Select>
+      )}
+
+      {filial && (
+        <div className="mt-2 text-sm">
+          <p className="text-ink-soft">
+            {filial.manager_name || 'Sem gestor cadastrado'}
+            {filial.manager_phone && ` · ${formatPhone(filial.manager_phone)}`}
+          </p>
+          <p className="mt-1 text-xs text-ink-faint">
+            {filial.source === 'aparelho'
+              ? `Resolvido como ${filial.name}, confirmado pelo aparelho da última batida`
+              : 'Resolvido pelo nº de folha'}
+          </p>
+        </div>
+      )}
+
+      {!filial && branches !== null && branches.length > 0 && numeroFolha && !linked && (
+        <p className="mt-2 text-xs text-ink-faint">
+          Sem lotação — escolha a filial acima para vincular pelo nº de folha {numeroFolha}.
+        </p>
+      )}
+    </div>
   )
 }
 
