@@ -224,12 +224,7 @@ export default function Auditorias() {
         <div className="mb-3 flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-ink-soft">Dias auditados</h2>
-            <p className="text-xs text-ink-faint">
-              Uma linha por dia, sempre a varredura mais recente.{' '}
-              <Link to="/reports/history" className="font-medium text-brand underline underline-offset-2 hover:text-brand-strong">
-                Ver registro de execuções
-              </Link>
-            </p>
+            <p className="text-xs text-ink-faint">Uma linha por dia, sempre a varredura mais recente.</p>
           </div>
           <button
             type="button"

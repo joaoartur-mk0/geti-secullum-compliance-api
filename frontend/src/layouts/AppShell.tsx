@@ -9,7 +9,6 @@ import {
   LogOut,
   Menu,
   MessageCircle,
-  ScrollText,
   ShieldAlert,
   ShieldCheck,
   Users,
@@ -53,12 +52,6 @@ const navItems = [
   { to: '/whatsapp', label: 'WhatsApp', icon: MessageCircle, end: false, superAdminOnly: false },
   { to: '/empresa', label: 'Empresa', icon: Building2, end: false, superAdminOnly: false },
   { to: '/moderacao', label: 'Moderação', icon: ShieldAlert, end: false, superAdminOnly: true },
-]
-
-// Itens de configurações: menos evidentes que a navegação principal, ficam num bloco
-// separado abaixo dela.
-const settingsNavItems = [
-  { to: '/reports/history', label: 'Registro de execuções', icon: ScrollText, end: false },
 ]
 
 type TenantState =
@@ -185,32 +178,6 @@ export default function AppShell() {
                 {label}
               </NavLink>
             ))}
-          </div>
-
-          <div className="mt-6 border-t border-side-raise pt-4">
-            <p className="px-3 text-xs font-semibold uppercase tracking-wide text-side-faint/70">
-              Configurações
-            </p>
-            <div className="mt-2 flex flex-col gap-1">
-              {settingsNavItems.map(({ to, label, icon: Icon, end }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={end}
-                  onClick={() => setMobileNavOpen(false)}
-                  className={({ isActive }) =>
-                    `flex min-h-11 items-center gap-3 rounded-field px-3 text-xs font-medium transition-colors duration-150 ${
-                      isActive
-                        ? 'bg-side-raise text-side-ink'
-                        : 'text-side-faint/70 hover:bg-side-raise/60 hover:text-side-ink'
-                    }`
-                  }
-                >
-                  <Icon size={16} aria-hidden />
-                  {label}
-                </NavLink>
-              ))}
-            </div>
           </div>
         </nav>
 

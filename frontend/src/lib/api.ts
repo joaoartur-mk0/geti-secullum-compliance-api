@@ -92,8 +92,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
-// reportDateQuery monta a querystring de filtro por período (?start_date=&end_date=)
-// compartilhada por listReports e listReportHistory.
+// reportDateQuery monta a querystring de filtro por período (?start_date=&end_date=) de
+// listReports.
 function reportDateQuery(filters?: { start_date?: string; end_date?: string }): string {
   const params = new URLSearchParams()
   if (filters?.start_date) params.set('start_date', filters.start_date)
@@ -227,17 +227,11 @@ export const api = {
     request<{ message: string }>(`/api/v1/staffs/${staffId}`, { method: 'DELETE' }),
 
   // GET /reports: só a varredura mais recente de cada dia (o backend já deduplica). Aceita
-  // ?start_date=&end_date= para consultar/filtrar um período completo (semana, mês).
+  // ?start_date=&end_date= para consultar/filtrar um período completo (semana, mês). O
+  // painel não consome o histórico completo (com reauditorias) — só esta visão por dia.
   listReports: (tenantId: number, filters?: { start_date?: string; end_date?: string }) =>
     request<{ reports: Report[] | null }>(
       `/api/v1/tenants/${tenantId}/reports${reportDateQuery(filters)}`,
-    ).then((r) => r.reports ?? []),
-
-  // GET /reports/history: histórico completo, inclusive reauditorias do mesmo dia. Mesmos
-  // filtros de período que listReports.
-  listReportHistory: (tenantId: number, filters?: { start_date?: string; end_date?: string }) =>
-    request<{ reports: Report[] | null }>(
-      `/api/v1/tenants/${tenantId}/reports/history${reportDateQuery(filters)}`,
     ).then((r) => r.reports ?? []),
 
   // Só ativos (sem Demissao) — ver listCollaboratorsHistory para o histórico completo.
