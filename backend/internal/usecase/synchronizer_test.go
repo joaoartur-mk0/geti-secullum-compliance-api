@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,20 +27,27 @@ func (f *fakeTenantRepo) Delete(int) error                                 { ret
 func (f *fakeTenantRepo) GetSettings(int) (*domain.TenantSettings, error)  { return nil, nil }
 func (f *fakeTenantRepo) UpdateSettings(int, *domain.TenantSettings) error { return nil }
 
+// fakeCollabRepo é usado tanto por testes de um único tenant quanto pelos testes do
+// agendador, que sincronizam vários tenants concorrentemente contra o MESMO fake — daí o
+// mutex, para o teste não gerar seu próprio falso-positivo de corrida de dados.
 type fakeCollabRepo struct {
+	mu    sync.Mutex
 	saved []domain.Collaborator
 	err   error
 }
 
 func (f *fakeCollabRepo) Save(*domain.Collaborator) error { return nil }
 func (f *fakeCollabRepo) SaveAll(collaborators []domain.Collaborator) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.err != nil {
 		return f.err
 	}
 	f.saved = collaborators
 	return nil
 }
-func (f *fakeCollabRepo) GetByTenantID(int) ([]domain.Collaborator, error) { return nil, nil }
+func (f *fakeCollabRepo) GetByTenantID(int) ([]domain.Collaborator, error)        { return nil, nil }
+func (f *fakeCollabRepo) GetHistoryByTenantID(int) ([]domain.Collaborator, error) { return nil, nil }
 func (f *fakeCollabRepo) GetBySecullumID(int, int) (*domain.Collaborator, error) {
 	return nil, nil
 }
@@ -50,6 +58,13 @@ type fakeSecullumSvc struct {
 
 	horarios     map[int][]domain.CollaboratorSchedule
 	horarioCalls int // conta chamadas a GetHorario, para testar o dedupe
+
+	equipments    []domain.Equipment
+	equipmentsErr error
+
+	// delay simula uma chamada HTTP lenta à Secullum (ex.: rate limit, muitos tenants) —
+	// usado para provar que a sincronização diária não deve bloquear o loop do agendador.
+	delay time.Duration
 }
 
 func (f *fakeSecullumSvc) GetDailyPunches(*domain.Tenant, time.Time) ([]domain.DailyPunch, error) {
@@ -59,12 +74,38 @@ func (f *fakeSecullumSvc) GetDailyPunchesRange(*domain.Tenant, time.Time, time.T
 	return nil, nil
 }
 func (f *fakeSecullumSvc) GetCollaborators(*domain.Tenant) ([]domain.Collaborator, error) {
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
 	return f.collaborators, f.err
 }
 func (f *fakeSecullumSvc) GetHorario(_ *domain.Tenant, numero int) ([]domain.CollaboratorSchedule, error) {
 	f.horarioCalls++
 	return f.horarios[numero], nil
 }
+func (f *fakeSecullumSvc) GetEquipamentos(*domain.Tenant) ([]domain.Equipment, error) {
+	return f.equipments, f.equipmentsErr
+}
+func (f *fakeSecullumSvc) GetFonteDados(*domain.Tenant, time.Time, time.Time) ([]domain.FonteDadoItem, error) {
+	return nil, nil
+}
+
+type fakeEquipRepo struct {
+	mu    sync.Mutex
+	saved []domain.Equipment
+	err   error
+}
+
+func (f *fakeEquipRepo) SaveAll(tenantID int, equipments []domain.Equipment) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.saved = equipments
+	return nil
+}
+func (f *fakeEquipRepo) GetByTenantID(int) ([]domain.Equipment, error) { return nil, nil }
 
 func TestSyncTenant_Sucesso(t *testing.T) {
 	tenantRepo := &fakeTenantRepo{tenant: &domain.Tenant{ID: 1, SecullumDatabaseID: 82720}}
@@ -76,7 +117,7 @@ func TestSyncTenant_Sucesso(t *testing.T) {
 		},
 	}
 
-	sync := NewSynchronizerService(tenantRepo, collabRepo, secullumSvc)
+	sync := NewSynchronizerService(tenantRepo, collabRepo, &fakeEquipRepo{}, secullumSvc)
 	n, err := sync.SyncTenant(1)
 	if err != nil {
 		t.Fatalf("erro inesperado: %v", err)
@@ -114,7 +155,7 @@ func TestSyncTenant_DedupeHorarios(t *testing.T) {
 		},
 	}
 
-	sync := NewSynchronizerService(tenantRepo, collabRepo, secullumSvc)
+	sync := NewSynchronizerService(tenantRepo, collabRepo, &fakeEquipRepo{}, secullumSvc)
 	if _, err := sync.SyncTenant(1); err != nil {
 		t.Fatalf("erro inesperado: %v", err)
 	}
@@ -144,7 +185,7 @@ func TestSyncTenant_FalhaAoBuscarHorarioNaoAbortaSincronizacao(t *testing.T) {
 		horarios:      nil, // GetHorario devolve vazio para o número 8 (simula falha tratada)
 	}
 
-	sync := NewSynchronizerService(tenantRepo, collabRepo, secullumSvc)
+	sync := NewSynchronizerService(tenantRepo, collabRepo, &fakeEquipRepo{}, secullumSvc)
 	n, err := sync.SyncTenant(1)
 	if err != nil {
 		t.Fatalf("falha ao buscar UM horário não deveria abortar a sincronização: %v", err)
@@ -156,7 +197,7 @@ func TestSyncTenant_FalhaAoBuscarHorarioNaoAbortaSincronizacao(t *testing.T) {
 
 func TestSyncTenant_TenantNaoEncontrado(t *testing.T) {
 	tenantRepo := &fakeTenantRepo{err: domain.NewNotFound("op", "tenant não encontrado", nil)}
-	sync := NewSynchronizerService(tenantRepo, &fakeCollabRepo{}, &fakeSecullumSvc{})
+	sync := NewSynchronizerService(tenantRepo, &fakeCollabRepo{}, &fakeEquipRepo{}, &fakeSecullumSvc{})
 
 	if _, err := sync.SyncTenant(99); err == nil {
 		t.Fatalf("esperava erro de tenant não encontrado")
@@ -166,7 +207,7 @@ func TestSyncTenant_TenantNaoEncontrado(t *testing.T) {
 func TestSyncTenant_FalhaNaSecullum(t *testing.T) {
 	tenantRepo := &fakeTenantRepo{tenant: &domain.Tenant{ID: 1}}
 	secullumSvc := &fakeSecullumSvc{err: errors.New("status 401")}
-	sync := NewSynchronizerService(tenantRepo, &fakeCollabRepo{}, secullumSvc)
+	sync := NewSynchronizerService(tenantRepo, &fakeCollabRepo{}, &fakeEquipRepo{}, secullumSvc)
 
 	if _, err := sync.SyncTenant(1); err == nil {
 		t.Fatalf("esperava erro propagado da Secullum")
@@ -177,9 +218,57 @@ func TestSyncTenant_FalhaAoSalvar(t *testing.T) {
 	tenantRepo := &fakeTenantRepo{tenant: &domain.Tenant{ID: 1}}
 	secullumSvc := &fakeSecullumSvc{collaborators: []domain.Collaborator{{SecullumID: 1}}}
 	collabRepo := &fakeCollabRepo{err: errors.New("db down")}
-	sync := NewSynchronizerService(tenantRepo, collabRepo, secullumSvc)
+	sync := NewSynchronizerService(tenantRepo, collabRepo, &fakeEquipRepo{}, secullumSvc)
 
 	if _, err := sync.SyncTenant(1); err == nil {
+		t.Fatalf("esperava erro propagado do repositório")
+	}
+}
+
+func TestSyncEquipment_Sucesso(t *testing.T) {
+	tenantRepo := &fakeTenantRepo{tenant: &domain.Tenant{ID: 1, SecullumDatabaseID: 82720}}
+	equipRepo := &fakeEquipRepo{}
+	secullumSvc := &fakeSecullumSvc{
+		equipments: []domain.Equipment{
+			{SecullumID: 1, Descricao: "CONTROL ID MATRIZ"},
+			{SecullumID: 3, Descricao: "CONTROL ID SÃO CRISTOVÃO"},
+		},
+	}
+
+	sync := NewSynchronizerService(tenantRepo, &fakeCollabRepo{}, equipRepo, secullumSvc)
+	n, err := sync.SyncEquipment(1)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("n = %d, quer 2", n)
+	}
+	if len(equipRepo.saved) != 2 {
+		t.Fatalf("esperava 2 equipamentos salvos, veio %d", len(equipRepo.saved))
+	}
+}
+
+func TestSyncEquipment_FalhaNaSecullumNaoSalva(t *testing.T) {
+	tenantRepo := &fakeTenantRepo{tenant: &domain.Tenant{ID: 1}}
+	equipRepo := &fakeEquipRepo{}
+	secullumSvc := &fakeSecullumSvc{equipmentsErr: errors.New("status 401")}
+
+	sync := NewSynchronizerService(tenantRepo, &fakeCollabRepo{}, equipRepo, secullumSvc)
+	if _, err := sync.SyncEquipment(1); err == nil {
+		t.Fatalf("esperava erro propagado da Secullum")
+	}
+	if equipRepo.saved != nil {
+		t.Errorf("não deveria ter chamado SaveAll após falha na Secullum")
+	}
+}
+
+func TestSyncEquipment_FalhaAoSalvarEspelhamento(t *testing.T) {
+	tenantRepo := &fakeTenantRepo{tenant: &domain.Tenant{ID: 1}}
+	equipRepo := &fakeEquipRepo{err: errors.New("db down")}
+	secullumSvc := &fakeSecullumSvc{equipments: []domain.Equipment{{SecullumID: 1}}}
+
+	sync := NewSynchronizerService(tenantRepo, &fakeCollabRepo{}, equipRepo, secullumSvc)
+	if _, err := sync.SyncEquipment(1); err == nil {
 		t.Fatalf("esperava erro propagado do repositório")
 	}
 }

@@ -67,7 +67,7 @@ func at(hhmm string) time.Time {
 func TestScheduler_DisparaNoHorarioConfigurado(t *testing.T) {
 	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.tick(at("01:00"))
 
@@ -79,7 +79,7 @@ func TestScheduler_DisparaNoHorarioConfigurado(t *testing.T) {
 func TestScheduler_NaoDisparaForaDoHorario(t *testing.T) {
 	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.tick(at("00:59"))
 	s.tick(at("01:01"))
@@ -94,7 +94,7 @@ func TestScheduler_NaoDisparaForaDoHorario(t *testing.T) {
 func TestScheduler_NaoDisparaDuasVezesNoMesmoDia(t *testing.T) {
 	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.tick(at("01:00"))
 	s.tick(at("01:00").Add(30 * time.Second)) // ainda dentro do minuto 01:00
@@ -109,7 +109,7 @@ func TestScheduler_NaoDisparaDuasVezesNoMesmoDia(t *testing.T) {
 func TestScheduler_DisparaDeNovoNoDiaSeguinte(t *testing.T) {
 	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.tick(at("01:00"))
 	s.tick(at("01:00").AddDate(0, 0, 1))
@@ -125,7 +125,7 @@ func TestScheduler_IgnoraTenantSemHorarioConfigurado(t *testing.T) {
 		{ID: 2, Active: true, Settings: nil},
 	}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.tick(at("01:00"))
 
@@ -139,7 +139,7 @@ func TestScheduler_IgnoraTenantSemHorarioConfigurado(t *testing.T) {
 func TestScheduler_TickPublicaNotifyTrue(t *testing.T) {
 	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.tick(at("01:00"))
 
@@ -157,7 +157,7 @@ func TestScheduler_HourlyTickDisparaParaTodosOsAtivos(t *testing.T) {
 		tenantWithHorario(2, ""), // sem horário diário configurado; a atualização horária não depende disso
 	}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.hourlyTick()
 
@@ -170,7 +170,7 @@ func TestScheduler_HourlyTickDisparaParaTodosOsAtivos(t *testing.T) {
 func TestScheduler_HourlyTickPublicaNotifyFalse(t *testing.T) {
 	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.hourlyTick()
 
@@ -187,7 +187,7 @@ func TestScheduler_HourlyTickPublicaNotifyFalse(t *testing.T) {
 func TestScheduler_HourlyTickPublicaPeriodoDoMes(t *testing.T) {
 	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.hourlyTick()
 
@@ -207,7 +207,7 @@ func TestScheduler_HourlyTickPublicaPeriodoDoMes(t *testing.T) {
 func TestScheduler_HourlyTickNaoTemLimiteDiario(t *testing.T) {
 	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenantWithHorario(1, "01:00")}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.hourlyTick()
 	s.hourlyTick()
@@ -261,7 +261,7 @@ func TestScheduler_CadaTenantNoSeuProprioHorario(t *testing.T) {
 		tenantWithHorario(2, "02:00"),
 	}}
 	pub := &fakePublisher{}
-	s := NewSchedulerService(repo, pub)
+	s := NewSchedulerService(repo, pub, nil)
 
 	s.tick(at("01:00"))
 	if got := pub.count(); got != 1 {
@@ -272,4 +272,124 @@ func TestScheduler_CadaTenantNoSeuProprioHorario(t *testing.T) {
 	if got := pub.count(); got != 2 {
 		t.Fatalf("às 02:00 o tenant 2 também deveria ter disparado, vieram %d", got)
 	}
+}
+
+// multiTenantRepo é o fakeTenantRepo do SynchronizerService, mas com um tenant por id —
+// necessário aqui porque o agendador sincroniza vários tenants por id real, ao contrário
+// dos outros testes de sincronização, que giram em torno de um único tenant fixo.
+type multiTenantRepo struct {
+	byID map[int]*domain.Tenant
+}
+
+func (f *multiTenantRepo) GetByID(id int) (*domain.Tenant, error) { return f.byID[id], nil }
+func (f *multiTenantRepo) GetActiveTenants() ([]*domain.Tenant, error) {
+	panic("não usado")
+}
+func (f *multiTenantRepo) List(bool) ([]*domain.Tenant, error)              { panic("não usado") }
+func (f *multiTenantRepo) Save(*domain.Tenant) error                        { panic("não usado") }
+func (f *multiTenantRepo) Update(*domain.Tenant) error                      { panic("não usado") }
+func (f *multiTenantRepo) Activate(int) error                               { panic("não usado") }
+func (f *multiTenantRepo) Deactivate(int) error                             { panic("não usado") }
+func (f *multiTenantRepo) Delete(int) error                                 { panic("não usado") }
+func (f *multiTenantRepo) GetSettings(int) (*domain.TenantSettings, error)  { panic("não usado") }
+func (f *multiTenantRepo) UpdateSettings(int, *domain.TenantSettings) error { panic("não usado") }
+
+// TestScheduler_SincronizacaoDiariaFixaRodaParaTodosOsTenantsAtivos cobre o item 4 da
+// especificação: às 03:00 (dailySyncTime), TODOS os tenants ativos têm colaboradores e
+// equipamentos sincronizados — no MESMO horário para todos, independente do horário de
+// fechamento configurado individualmente (que continua sendo checado à parte).
+func TestScheduler_SincronizacaoDiariaFixaRodaParaTodosOsTenantsAtivos(t *testing.T) {
+	tenant1 := &domain.Tenant{ID: 1, Active: true}
+	tenant2 := &domain.Tenant{ID: 2, Active: true}
+	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenant1, tenant2}}
+
+	syncTenantRepo := &multiTenantRepo{byID: map[int]*domain.Tenant{1: tenant1, 2: tenant2}}
+	collabRepo := &fakeCollabRepo{}
+	equipRepo := &fakeEquipRepo{}
+	secullumSvc := &fakeSecullumSvc{
+		collaborators: []domain.Collaborator{{SecullumID: 10}},
+		equipments:    []domain.Equipment{{SecullumID: 1}},
+	}
+	syncService := NewSynchronizerService(syncTenantRepo, collabRepo, equipRepo, secullumSvc)
+
+	s := NewSchedulerService(repo, &fakePublisher{}, syncService)
+	s.tick(at(dailySyncTime))
+	// runDailySync roda em goroutine própria (tick() não bloqueia — ver comentário em
+	// tick()); o teste precisa esperar essa goroutine terminar antes de conferir o
+	// resultado.
+	s.waitForDailySync()
+
+	if len(collabRepo.saved) != 1 {
+		t.Errorf("esperava colaboradores sincronizados, veio %d chamada(s)", len(collabRepo.saved))
+	}
+	if len(equipRepo.saved) != 1 {
+		t.Errorf("esperava equipamentos sincronizados, veio %d chamada(s)", len(equipRepo.saved))
+	}
+}
+
+// TestScheduler_SincronizacaoDiariaSoRodaUmaVezPorDia garante que ticks repetidos no
+// mesmo minuto (a checagem roda a cada 30s) não disparem a sincronização mais de uma vez.
+func TestScheduler_SincronizacaoDiariaSoRodaUmaVezPorDia(t *testing.T) {
+	tenant1 := &domain.Tenant{ID: 1, Active: true}
+	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenant1}}
+	syncTenantRepo := &multiTenantRepo{byID: map[int]*domain.Tenant{1: tenant1}}
+
+	var calls int
+	collabRepo := &countingCollabRepo{fakeCollabRepo: fakeCollabRepo{}, onSaveAll: func() { calls++ }}
+	syncService := NewSynchronizerService(syncTenantRepo, collabRepo, &fakeEquipRepo{}, &fakeSecullumSvc{})
+
+	s := NewSchedulerService(repo, &fakePublisher{}, syncService)
+	s.tick(at(dailySyncTime))
+	s.tick(at(dailySyncTime))
+	s.waitForDailySync() // espera a (única) goroutine de sync disparada pelo primeiro tick
+
+	if calls != 1 {
+		t.Errorf("sincronização diária rodou %d vez(es) no mesmo dia, quer 1", calls)
+	}
+}
+
+// TestScheduler_SincronizacaoDiariaNaoBloqueiaOTick prova o bug encontrado em code
+// review: tick() rodava a sincronização diária SINCRONAMENTE, bloqueando até todos os
+// tenants terminarem (HTTP real à Secullum, minutos em produção). Como tick() roda dentro
+// do único loop `select` de Start() (ver ticker/hourlyTicker), enquanto ele estivesse
+// bloqueado o loop de disparo por Horario (mais abaixo NO MESMO tick()) ficava represado, e
+// o próximo tick do ticker/hourlyTicker ficava pendente sem processar — tickers do Go não
+// enfileiram ticks perdidos, descartam. Um tenant com Horario == dailySyncTime podia ter o
+// fechamento atrasado; a atualização horária silenciosa podia ser pulada na hora certa.
+func TestScheduler_SincronizacaoDiariaNaoBloqueiaOTick(t *testing.T) {
+	tenant1 := &domain.Tenant{ID: 1, Active: true, Settings: &domain.TenantSettings{Horario: dailySyncTime}}
+	repo := &schedulerTenantRepo{tenants: []*domain.Tenant{tenant1}}
+	syncTenantRepo := &multiTenantRepo{byID: map[int]*domain.Tenant{1: tenant1}}
+
+	const syncDelay = 200 * time.Millisecond
+	syncService := NewSynchronizerService(syncTenantRepo, &fakeCollabRepo{}, &fakeEquipRepo{}, &fakeSecullumSvc{delay: syncDelay})
+
+	pub := &fakePublisher{}
+	s := NewSchedulerService(repo, pub, syncService)
+
+	start := time.Now()
+	s.tick(at(dailySyncTime))
+	elapsed := time.Since(start)
+
+	if elapsed >= syncDelay {
+		t.Fatalf("tick() bloqueou por %v esperando a sincronização diária terminar (limiar %v) — "+
+			"o disparo por Horario e o próximo tick do agendador ficam represados enquanto a sync roda", elapsed, syncDelay)
+	}
+	// O fechamento diário do tenant (Horario == dailySyncTime) precisa disparar mesmo com
+	// a sincronização ainda em andamento em background — são independentes.
+	if got := pub.count(); got != 1 {
+		t.Errorf("esperava a auditoria de fechamento disparada mesmo com a sync em andamento, pub.count() = %d", got)
+	}
+
+	s.waitForDailySync() // ponto determinístico para o teste seguinte não vazar a goroutine
+}
+
+type countingCollabRepo struct {
+	fakeCollabRepo
+	onSaveAll func()
+}
+
+func (f *countingCollabRepo) SaveAll(collaborators []domain.Collaborator) error {
+	f.onSaveAll()
+	return f.fakeCollabRepo.SaveAll(collaborators)
 }

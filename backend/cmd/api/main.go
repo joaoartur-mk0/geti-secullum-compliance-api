@@ -43,6 +43,7 @@ func main() {
 		&models.TenantSettings{},
 		&models.Collaborator{},
 		&models.CollaboratorSchedule{},
+		&models.Equipment{},
 		&models.PunchRecord{},
 		&models.Staff{},
 		&models.Report{},
@@ -100,6 +101,7 @@ func main() {
 	tenantRepo := repositories.NewTenantRepository(db)
 	reportRepo := repositories.NewReportRepository(db)
 	collabRepo := repositories.NewCollaboratorRepository(db)
+	equipRepo := repositories.NewEquipmentRepository(db)
 	punchRecordRepo := repositories.NewPunchRecordRepository(db)
 
 	// Serviços Externos (Client HTTP da API Secullum).
@@ -129,7 +131,7 @@ func main() {
 	// Sincronizador de colaboradores: busca o espelho de funcionários/jornadas na
 	// Secullum e o persiste localmente, alimentando o worker de auditoria com dados
 	// reais (em vez do colaborador mockado usado nas fases iniciais do projeto).
-	syncService := usecase.NewSynchronizerService(tenantRepo, collabRepo, secullumSvc)
+	syncService := usecase.NewSynchronizerService(tenantRepo, collabRepo, equipRepo, secullumSvc)
 
 	// Client da Evolution API (credenciais GLOBAIS, iguais para todos os tenants).
 	// Implementa o envio de alertas (worker de notificações) E a gerência da instância
@@ -203,7 +205,7 @@ func main() {
 	// horário configurado na aba Avisos (TenantSettings.Horario). Publica na mesma fila
 	// audit.trigger que o botão "Auditar agora" do painel — não é um motor de auditoria
 	// novo, só o gatilho que faltava (ver usecase/scheduler.go).
-	scheduler := usecase.NewSchedulerService(tenantRepo, publisherPool)
+	scheduler := usecase.NewSchedulerService(tenantRepo, publisherPool, syncService)
 	go scheduler.Start(context.Background())
 
 	// =====================================================================

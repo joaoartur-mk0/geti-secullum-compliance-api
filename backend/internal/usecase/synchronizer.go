@@ -8,22 +8,26 @@ import (
 )
 
 // SynchronizerService busca o espelho de colaboradores (funcionários e jornadas
-// contratuais) na API SecullumWEB e o persiste localmente, para que o motor de
-// auditoria não dependa de chamadas externas por colaborador durante o fechamento.
+// contratuais) e de equipamentos na API SecullumWEB e os persiste localmente, para que o
+// motor de auditoria não dependa de chamadas externas por colaborador durante o
+// fechamento.
 type SynchronizerService struct {
 	tenantRepo  domain.TenantRepository
 	collabRepo  domain.CollaboratorRepository
+	equipRepo   domain.EquipmentRepository
 	secullumSvc domain.SecullumService
 }
 
 func NewSynchronizerService(
 	tenantRepo domain.TenantRepository,
 	collabRepo domain.CollaboratorRepository,
+	equipRepo domain.EquipmentRepository,
 	secullumSvc domain.SecullumService,
 ) *SynchronizerService {
 	return &SynchronizerService{
 		tenantRepo:  tenantRepo,
 		collabRepo:  collabRepo,
+		equipRepo:   equipRepo,
 		secullumSvc: secullumSvc,
 	}
 }
@@ -79,4 +83,25 @@ func (s *SynchronizerService) SyncTenant(tenantID int) (int, error) {
 	}
 
 	return len(collaborators), nil
+}
+
+// SyncEquipment busca os equipamentos do tenant na Secullum e espelha localmente
+// (upsert por secullum_id + remoção do que não veio mais na resposta). Devolve quantos
+// equipamentos ficaram sincronizados após a operação.
+func (s *SynchronizerService) SyncEquipment(tenantID int) (int, error) {
+	tenant, err := s.tenantRepo.GetByID(tenantID)
+	if err != nil {
+		return 0, fmt.Errorf("buscar tenant: %w", err)
+	}
+
+	equipments, err := s.secullumSvc.GetEquipamentos(tenant)
+	if err != nil {
+		return 0, fmt.Errorf("buscar equipamentos na Secullum: %w", err)
+	}
+
+	if err := s.equipRepo.SaveAll(tenant.ID, equipments); err != nil {
+		return 0, fmt.Errorf("salvar equipamentos: %w", err)
+	}
+
+	return len(equipments), nil
 }

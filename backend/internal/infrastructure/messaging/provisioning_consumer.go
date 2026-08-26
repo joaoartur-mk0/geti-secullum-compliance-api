@@ -79,11 +79,21 @@ func (c *ProvisioningConsumer) processMessage(msg amqp.Delivery) {
 	if err != nil {
 		// Falha externa (rede/token/tenant temporariamente indisponível) é transitória:
 		// devolve à fila para nova tentativa.
-		c.reject(msg, true, payload.TenantID, fmt.Sprintf("falha ao sincronizar: %v", err))
+		c.reject(msg, true, payload.TenantID, fmt.Sprintf("falha ao sincronizar colaboradores: %v", err))
 		return
 	}
-
 	log.Printf("[OK] Tenant %d: %d colaborador(es) sincronizado(s).\n", payload.TenantID, n)
+
+	log.Printf("-> Sincronizando equipamentos do Tenant %d...\n", payload.TenantID)
+	m, err := c.sync.SyncEquipment(payload.TenantID)
+	if err != nil {
+		// Mesmo raciocínio: falha externa é transitória, devolve à fila. Os
+		// colaboradores já sincronizados acima não são desfeitos — a reentrega repete
+		// o upsert idempotente de colaboradores sem prejuízo.
+		c.reject(msg, true, payload.TenantID, fmt.Sprintf("falha ao sincronizar equipamentos: %v", err))
+		return
+	}
+	log.Printf("[OK] Tenant %d: %d equipamento(s) sincronizado(s).\n", payload.TenantID, m)
 
 	if err := msg.Ack(false); err != nil {
 		log.Printf("[Provisioning][Erro] Tenant %d: sincronização concluída, mas falha ao confirmar (Ack) mensagem: %v\n", payload.TenantID, err)

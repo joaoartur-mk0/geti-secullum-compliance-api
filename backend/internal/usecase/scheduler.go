@@ -36,8 +36,9 @@ type EventPublisher interface {
 // (POST /api/v1/audit/trigger) publica na fila `audit.trigger`, com o campo `notify`
 // controlando se o AuditConsumer deve enfileirar o resumo no WhatsApp ao final.
 type SchedulerService struct {
-	tenantRepo domain.TenantRepository
-	publisher  EventPublisher
+	tenantRepo  domain.TenantRepository
+	publisher   EventPublisher
+	syncService *SynchronizerService
 
 	mu sync.Mutex
 	// lastRun guarda, por tenant, a data (YYYY-MM-DD) do último disparo automático — só
@@ -46,6 +47,15 @@ type SchedulerService struct {
 	// reinício logo após o horário já ter passado deixa o tenant sem a automática até o
 	// dia seguinte. Persistir isso resolveria, mas não foi pedido nesta rodada.
 	lastRun map[int]string
+	// lastSyncRun é o mesmo controle de "já disparou hoje", só que para a sincronização
+	// diária de equipamentos/colaboradores (dailySyncTime), independente do horário de
+	// fechamento configurado por tenant.
+	lastSyncRun map[int]string
+	// dailySyncWG conta a sincronização diária em andamento (disparada em goroutine própria
+	// por tick(), para não bloquear o loop do agendador — ver comentário em tick()). Só
+	// serve para os testes sincronizarem com o fim da goroutine (ver waitForDailySync);
+	// produção nunca chama Wait().
+	dailySyncWG sync.WaitGroup
 }
 
 // tickInterval define a granularidade da checagem do horário diário configurado. Precisa
@@ -56,11 +66,24 @@ const tickInterval = 30 * time.Second
 // hourlyInterval é a cadência da atualização silenciosa (item 2 acima).
 const hourlyInterval = 1 * time.Hour
 
-func NewSchedulerService(tenantRepo domain.TenantRepository, publisher EventPublisher) *SchedulerService {
+// dailySyncTime é o horário único e previsível ("HH:MM", hora local do servidor) em que
+// TODOS os tenants ativos têm equipamentos e colaboradores sincronizados com a Secullum —
+// fixo, ao contrário do horário de fechamento (configurável por tenant), justamente para
+// não deixar a rotina em horários variados ou concorrentes entre tenants.
+const dailySyncTime = "03:00"
+
+// syncConcurrencyLimit limita quantos tenants sincronizam em paralelo no horário fixo,
+// para não estourar o rate limit (100 req/min) da Secullum caso o número de tenants
+// cresça e a janela de execução deixe de caber sequencialmente.
+const syncConcurrencyLimit = 5
+
+func NewSchedulerService(tenantRepo domain.TenantRepository, publisher EventPublisher, syncService *SynchronizerService) *SchedulerService {
 	return &SchedulerService{
-		tenantRepo: tenantRepo,
-		publisher:  publisher,
-		lastRun:    make(map[int]string),
+		tenantRepo:  tenantRepo,
+		publisher:   publisher,
+		syncService: syncService,
+		lastRun:     make(map[int]string),
+		lastSyncRun: make(map[int]string),
 	}
 }
 
@@ -98,6 +121,26 @@ func (s *SchedulerService) tick(now time.Time) {
 	today := now.Format("2006-01-02")
 	nowHHMM := now.Format("15:04")
 
+	// Sincronização diária fixa (equipamentos + colaboradores), no MESMO horário para
+	// todos os tenants ativos — independente do horário de fechamento configurado por
+	// cada um (verificado a seguir).
+	//
+	// DISPARADA EM GOROUTINE PRÓPRIA, nunca inline aqui: tick() roda dentro do único loop
+	// `select` de Start() (ver ticker/hourlyTicker). runDailySync faz chamadas HTTP reais à
+	// Secullum para cada tenant e pode levar minutos; se rodasse síncrona, bloquearia esta
+	// MESMA chamada de tick() antes de chegar ao loop de Horario logo abaixo — atrasando o
+	// fechamento de um tenant cujo Horario também seja dailySyncTime — e o próximo tick do
+	// ticker/hourlyTicker ficaria pendente sem processar (tickers do Go não enfileiram
+	// ticks perdidos, descartam). dailySyncWG existe só para os testes terem um ponto
+	// determinístico de espera (ver waitForDailySync); em produção ninguém aguarda.
+	if nowHHMM == dailySyncTime && s.claimSyncForToday(today) {
+		s.dailySyncWG.Add(1)
+		go func() {
+			defer s.dailySyncWG.Done()
+			s.runDailySync(tenants)
+		}()
+	}
+
 	for _, tenant := range tenants {
 		if tenant.Settings == nil || tenant.Settings.Horario == "" {
 			continue // sem agendamento configurado
@@ -109,6 +152,78 @@ func (s *SchedulerService) tick(now time.Time) {
 			continue // já disparou hoje
 		}
 		s.trigger(tenant.ID)
+	}
+}
+
+// claimSyncForToday devolve true (e reserva) na primeira vez que QUALQUER tenant observa
+// o horário fixo de sincronização num dia; falso nos ticks seguintes do mesmo dia. Um
+// único claim para todos os tenants (ao contrário de claimForToday, por tenant) porque a
+// sincronização diária roda no mesmo horário para todo mundo — não há por que repetir a
+// checagem por tenant.
+func (s *SchedulerService) claimSyncForToday(today string) bool {
+	const globalKey = -1
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.lastSyncRun[globalKey] == today {
+		return false
+	}
+	s.lastSyncRun[globalKey] = today
+	return true
+}
+
+// runDailySync sincroniza equipamentos e colaboradores de CADA tenant ativo, em
+// paralelo com um limite de concorrência (syncConcurrencyLimit) para não sobrecarregar o
+// rate limit da Secullum. A falha de um tenant é isolada (log próprio) e não impede a
+// sincronização dos demais.
+func (s *SchedulerService) runDailySync(tenants []*domain.Tenant) {
+	if s.syncService == nil {
+		return
+	}
+
+	log.Printf("[Agendador] Iniciando sincronização diária fixa (%s) de equipamentos e colaboradores para %d tenant(s) ativo(s)...\n", dailySyncTime, len(tenants))
+
+	sem := make(chan struct{}, syncConcurrencyLimit)
+	var wg sync.WaitGroup
+	for _, tenant := range tenants {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(tenantID int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			s.syncTenantDaily(tenantID)
+		}(tenant.ID)
+	}
+	wg.Wait()
+
+	log.Printf("[Agendador] Sincronização diária fixa concluída para %d tenant(s).\n", len(tenants))
+}
+
+// waitForDailySync bloqueia até a sincronização diária disparada pelo tick mais recente
+// (se houver) terminar. Existe só para os testes: como tick() dispara runDailySync numa
+// goroutine própria (para não bloquear o loop do agendador — ver comentário em tick()),
+// os testes precisam de um ponto determinístico para conferir o resultado da
+// sincronização antes de fazer as asserções. Nunca chamado em produção.
+func (s *SchedulerService) waitForDailySync() {
+	s.dailySyncWG.Wait()
+}
+
+// syncTenantDaily sincroniza colaboradores e equipamentos de UM tenant, registrando
+// início/fim/sucesso/erro de cada etapa — a falha de uma etapa não interrompe a outra,
+// nem a sincronização dos demais tenants (chamador roda cada tenant isoladamente).
+func (s *SchedulerService) syncTenantDaily(tenantID int) {
+	log.Printf("[Agendador][Sync] Tenant %d: iniciando sincronização diária de colaboradores...\n", tenantID)
+	if n, err := s.syncService.SyncTenant(tenantID); err != nil {
+		log.Printf("[Agendador][Sync][Erro] Tenant %d: falha ao sincronizar colaboradores: %v\n", tenantID, err)
+	} else {
+		log.Printf("[Agendador][Sync][OK] Tenant %d: %d colaborador(es) sincronizado(s).\n", tenantID, n)
+	}
+
+	log.Printf("[Agendador][Sync] Tenant %d: iniciando sincronização diária de equipamentos...\n", tenantID)
+	if n, err := s.syncService.SyncEquipment(tenantID); err != nil {
+		log.Printf("[Agendador][Sync][Erro] Tenant %d: falha ao sincronizar equipamentos: %v\n", tenantID, err)
+	} else {
+		log.Printf("[Agendador][Sync][OK] Tenant %d: %d equipamento(s) sincronizado(s).\n", tenantID, n)
 	}
 }
 
