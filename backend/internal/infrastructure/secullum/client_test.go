@@ -229,3 +229,132 @@ func TestGetDailyPunches_ParseiaMemoriaEFolga(t *testing.T) {
 		t.Errorf("Memoria vazia não deveria produzir carga prevista")
 	}
 }
+
+// TestGetDailyPunches_MapeiaFonteDadosID cobre a chave de correlação usada no
+// enriquecimento de equipamento/motivo: os campos FonteDadosIdEntradaN/SaidaN da
+// resposta real de Batidas (docs/response_batidas_single_day_single_colaborator.json).
+func TestGetDailyPunches_MapeiaFonteDadosID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"FuncionarioId": 7, "Data": "2026-07-01T00:00:00",
+			 "Entrada1": "08:08", "Saida1": "11:42",
+			 "FonteDadosIdEntrada1": 11911, "FonteDadosIdSaida1": 11914}
+		]`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(srv.URL)
+	punches, err := client.GetDailyPunches(&domain.Tenant{}, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if len(punches) != 1 {
+		t.Fatalf("esperava 1 registro, veio %d", len(punches))
+	}
+
+	par := punches[0].Marcacoes[0]
+	if par.FonteDadosIDEntrada == nil || *par.FonteDadosIDEntrada != 11911 {
+		t.Errorf("FonteDadosIDEntrada = %v, quer 11911", par.FonteDadosIDEntrada)
+	}
+	if par.FonteDadosIDSaida == nil || *par.FonteDadosIDSaida != 11914 {
+		t.Errorf("FonteDadosIDSaida = %v, quer 11914", par.FonteDadosIDSaida)
+	}
+}
+
+func TestGetCollaborators_MapeiaAdmissaoEDemissao(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"Id": 1, "Nome": "Ativo", "Admissao": "2023-01-11T00:00:00", "Demissao": null},
+			{"Id": 2, "Nome": "Demitido", "Admissao": "2020-05-01T00:00:00", "Demissao": "2025-05-12T00:00:00"}
+		]`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(srv.URL)
+	collabs, err := client.GetCollaborators(&domain.Tenant{})
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if len(collabs) != 2 {
+		t.Fatalf("esperava 2 colaboradores, veio %d", len(collabs))
+	}
+
+	ativo := collabs[0]
+	if ativo.Demitido || ativo.Demissao != nil {
+		t.Errorf("colaborador sem Demissao deveria vir Demitido=false, veio %+v", ativo)
+	}
+	if ativo.Admissao == nil || ativo.Admissao.Format("2006-01-02") != "2023-01-11" {
+		t.Errorf("Admissao mapeada incorretamente: %+v", ativo.Admissao)
+	}
+
+	demitido := collabs[1]
+	if !demitido.Demitido {
+		t.Errorf("colaborador com Demissao preenchida deveria vir Demitido=true")
+	}
+	if demitido.Demissao == nil || demitido.Demissao.Format("2006-01-02") != "2025-05-12" {
+		t.Errorf("Demissao mapeada incorretamente: %+v", demitido.Demissao)
+	}
+}
+
+func TestGetEquipamentos_Mapeia(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"Id": 1, "Descricao": "CONTROL ID MATRIZ", "EnderecoIP": "192.168.0.31"},
+			{"Id": 6, "Descricao": "Control IDFace Matriz", "EnderecoIP": null}
+		]`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(srv.URL)
+	equipments, err := client.GetEquipamentos(&domain.Tenant{ID: 5})
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if len(equipments) != 2 {
+		t.Fatalf("esperava 2 equipamentos, veio %d", len(equipments))
+	}
+	if equipments[0].SecullumID != 1 || equipments[0].Descricao != "CONTROL ID MATRIZ" || equipments[0].TenantID != 5 {
+		t.Errorf("equipamento mapeado incorretamente: %+v", equipments[0])
+	}
+	if equipments[0].EnderecoIP == nil || *equipments[0].EnderecoIP != "192.168.0.31" {
+		t.Errorf("EnderecoIP = %v, quer 192.168.0.31", equipments[0].EnderecoIP)
+	}
+	if equipments[1].EnderecoIP != nil {
+		t.Errorf("EnderecoIP deveria ser nil para aparelho sem IP, veio %v", *equipments[1].EnderecoIP)
+	}
+}
+
+func TestGetFonteDados_Mapeia(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("DataInicio"); got != "2026-08-24" {
+			t.Errorf("DataInicio = %q, quer 2026-08-24", got)
+		}
+		if got := r.URL.Query().Get("DataFim"); got != "2026-08-24" {
+			t.Errorf("DataFim = %q, quer 2026-08-24", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"Id": 347372, "EquipamentoId": 6, "Motivo": null}
+		]`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(srv.URL)
+	day := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	items, err := client.GetFonteDados(&domain.Tenant{}, day, day)
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("esperava 1 item, veio %d", len(items))
+	}
+	if items[0].ID != 347372 || items[0].EquipamentoID == nil || *items[0].EquipamentoID != 6 {
+		t.Errorf("item mapeado incorretamente: %+v", items[0])
+	}
+	if items[0].Motivo != nil {
+		t.Errorf("Motivo deveria ser nil, veio %v", *items[0].Motivo)
+	}
+}

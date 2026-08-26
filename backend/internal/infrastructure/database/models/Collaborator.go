@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 type Collaborator struct {
 	ID         int    `gorm:"primaryKey;autoIncrement" json:"id"`
 	TenantID   int    `gorm:"not null;uniqueIndex:idx_collaborator_tenant_secullum" json:"tenant_id"`
@@ -10,6 +12,12 @@ type Collaborator struct {
 	// NumeroFolha vem da Secullum como string (pode ter zeros à esquerda). Indexado
 	// porque é chave de busca na resolução de filial.
 	NumeroFolha string `gorm:"type:varchar(40);index" json:"numero_folha"`
+
+	Admissao *time.Time `gorm:"type:date" json:"admissao"`
+	Demissao *time.Time `gorm:"type:date" json:"demissao"`
+	// Demitido é derivada de Demissao preenchida a cada sincronização — indexada porque
+	// é o filtro de GET /collaborators (só ativos).
+	Demitido bool `gorm:"not null;default:false;index" json:"demitido"`
 
 	// Relacionamentos GORM
 	Schedules []CollaboratorSchedule `gorm:"foreignKey:CollaboratorID" json:"schedules,omitempty"`

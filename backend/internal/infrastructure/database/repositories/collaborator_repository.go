@@ -72,6 +72,9 @@ func (r *collaboratorRepository) upsert(tx *gorm.DB, collaborator *domain.Collab
 			Cpf:         collaborator.Cpf,
 			Celular:     collaborator.Celular,
 			NumeroFolha: collaborator.NumeroFolha,
+			Admissao:    collaborator.Admissao,
+			Demissao:    collaborator.Demissao,
+			Demitido:    collaborator.Demitido,
 			Schedules:   schedules,
 		}
 		if err := tx.Create(model).Error; err != nil {
@@ -81,12 +84,17 @@ func (r *collaboratorRepository) upsert(tx *gorm.DB, collaborator *domain.Collab
 		return nil
 	}
 
-	// Atualiza os dados de identidade.
+	// Atualiza os dados de identidade. demissao/demitido são sempre reescritos com o que
+	// a Secullum enviou nesta sincronização — inclusive para "reverter" um desligamento
+	// registrado por engano lá (Demissao volta a vir nula).
 	if err := tx.Model(&existing).Updates(map[string]interface{}{
 		"name":         collaborator.Name,
 		"cpf":          collaborator.Cpf,
 		"celular":      collaborator.Celular,
 		"numero_folha": collaborator.NumeroFolha,
+		"admissao":     collaborator.Admissao,
+		"demissao":     collaborator.Demissao,
+		"demitido":     collaborator.Demitido,
 	}).Error; err != nil {
 		return domain.NewInternal(op, "falha ao atualizar colaborador", err)
 	}
@@ -110,8 +118,27 @@ func (r *collaboratorRepository) GetByTenantID(tenantID int) ([]domain.Collabora
 	const op = "collaboratorRepository.GetByTenantID"
 
 	var modelsList []models.Collaborator
-	if err := r.db.Preload("Schedules").Where("tenant_id = ?", tenantID).Order("id").Find(&modelsList).Error; err != nil {
+	if err := r.db.Preload("Schedules").
+		Where("tenant_id = ? AND demitido = ?", tenantID, false).
+		Order("id").Find(&modelsList).Error; err != nil {
 		return nil, domain.NewInternal(op, "falha ao listar colaboradores", err)
+	}
+
+	collaborators := make([]domain.Collaborator, 0, len(modelsList))
+	for _, m := range modelsList {
+		collaborators = append(collaborators, toDomainCollaborator(&m))
+	}
+	return collaborators, nil
+}
+
+// GetHistoryByTenantID devolve todos os colaboradores do tenant, ativos e demitidos —
+// usado por GET /collaborators/history (ver domain.CollaboratorRepository).
+func (r *collaboratorRepository) GetHistoryByTenantID(tenantID int) ([]domain.Collaborator, error) {
+	const op = "collaboratorRepository.GetHistoryByTenantID"
+
+	var modelsList []models.Collaborator
+	if err := r.db.Preload("Schedules").Where("tenant_id = ?", tenantID).Order("id").Find(&modelsList).Error; err != nil {
+		return nil, domain.NewInternal(op, "falha ao listar histórico de colaboradores", err)
 	}
 
 	collaborators := make([]domain.Collaborator, 0, len(modelsList))
@@ -161,6 +188,9 @@ func toDomainCollaborator(m *models.Collaborator) domain.Collaborator {
 		Cpf:         m.Cpf,
 		Celular:     m.Celular,
 		NumeroFolha: m.NumeroFolha,
+		Admissao:    m.Admissao,
+		Demissao:    m.Demissao,
+		Demitido:    m.Demitido,
 	}
 	for _, s := range m.Schedules {
 		c.Schedules = append(c.Schedules, domain.CollaboratorSchedule{

@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // Collaborator é a entidade que representa o funcionário auditado
 type Collaborator struct {
 	ID         int
@@ -18,6 +20,14 @@ type Collaborator struct {
 	// colaborador segue. Preenchido pelo client em GetCollaborators; o Synchronizer o
 	// usa para buscar (e deduplicar) as jornadas via GetHorario antes de montar Schedules.
 	HorarioNumero int
+
+	// Admissao/Demissao vêm direto da Secullum. Demitido é derivada de Demissao
+	// preenchida — mantida como campo próprio (em vez de checar Demissao != nil toda
+	// vez) porque é o que diferencia as rotas /collaborators (só ativos) e
+	// /collaborators/history (todos).
+	Admissao *time.Time
+	Demissao *time.Time
+	Demitido bool
 
 	Schedules []CollaboratorSchedule
 }
@@ -47,6 +57,12 @@ type CollaboratorSchedule struct {
 type CollaboratorRepository interface {
 	Save(collaborator *Collaborator) error
 	SaveAll(collaborators []Collaborator) error
+	// GetByTenantID devolve só os colaboradores ATIVOS (sem Demissao) — usado pelo
+	// painel padrão (GET /collaborators) e pelo motor de auditoria, que não deve avaliar
+	// jornada de quem já foi desligado.
 	GetByTenantID(tenantID int) ([]Collaborator, error)
+	// GetHistoryByTenantID devolve TODOS os colaboradores do tenant, ativos e demitidos
+	// — usado por GET /collaborators/history.
+	GetHistoryByTenantID(tenantID int) ([]Collaborator, error)
 	GetBySecullumID(tenantID int, secullumID int) (*Collaborator, error)
 }

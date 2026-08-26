@@ -26,6 +26,13 @@ func (s Severity) OrDefault(def Severity) Severity {
 type PunchPair struct {
 	Entrada *string // "HH:MM"
 	Saida   *string // "HH:MM"
+
+	// FonteDadosIDEntrada/FonteDadosIDSaida são os ids que a Secullum já devolve junto
+	// de cada marcação (FonteDadosIdEntradaN/FonteDadosIdSaidaN na resposta de Batidas),
+	// usados para cruzar com o endpoint FonteDados e obter EquipamentoId/Motivo — sem
+	// precisar combinar FuncionarioId+Data+Hora.
+	FonteDadosIDEntrada *int
+	FonteDadosIDSaida   *int
 }
 
 // DailyPunch é o cartão de um colaborador em um dia.
@@ -199,6 +206,37 @@ type ReportRepository interface {
 	ListLatestByTenant(tenantID int, start, end *time.Time) ([]Report, error)
 }
 
+// PunchRecord enriquece o dia auditado de um colaborador com a origem da marcação —
+// equipamento e motivo (inclusão manual, abono, etc.) — apurados cruzando o Id que a
+// própria resposta de batidas traz (PunchPair.FonteDadosIDEntrada/FonteDadosIDSaida) com
+// o retorno de GetFonteDados no mesmo período (ver usecase.AuditorService/AuditConsumer).
+//
+// Uma linha por (tenant, colaborador, data): quando o dia tem mais de uma marcação com
+// fontes diferentes, EquipamentoID/Motivo refletem a PRIMEIRA marcação do dia com
+// correspondência encontrada — suficiente para apontar "de onde veio o registro do dia"
+// sem multiplicar linhas por marcação.
+type PunchRecord struct {
+	ID             int
+	TenantID       int
+	CollaboratorID int // id do funcionário na Secullum
+	Date           time.Time
+
+	EquipamentoID *int
+	Motivo        *string
+}
+
+// PunchRecordRepository persiste e consulta o enriquecimento de origem da marcação por
+// dia auditado.
+type PunchRecordRepository interface {
+	// SaveAll faz upsert por (tenant_id, collaborator_id, date).
+	SaveAll(records []PunchRecord) error
+	// GetByCollaborator devolve os registros de um colaborador no período [start, end]
+	// (ambos inclusive), do dia mais antigo ao mais recente — consumido pelo endpoint que
+	// expõe equipamento/motivo ao painel (sem isto, o enriquecimento seria gravado e nunca
+	// lido por ninguém).
+	GetByCollaborator(tenantID, collaboratorID int, start, end time.Time) ([]PunchRecord, error)
+}
+
 type SecullumService interface {
 	GetDailyPunches(tenant *Tenant, date time.Time) ([]DailyPunch, error)
 	// GetDailyPunchesRange busca as batidas de TODO um período (start a end, inclusive)
@@ -209,4 +247,20 @@ type SecullumService interface {
 	// GetHorario busca a jornada contratual (por dia da semana) associada ao número de
 	// horário do funcionário na Secullum (Funcionario.Horario.Numero).
 	GetHorario(tenant *Tenant, numero int) ([]CollaboratorSchedule, error)
+	// GetEquipamentos busca os aparelhos (relógios de ponto) cadastrados na Secullum
+	// para o tenant.
+	GetEquipamentos(tenant *Tenant) ([]Equipment, error)
+	// GetFonteDados busca, para um período completo, a origem de cada marcação
+	// registrada (aparelho e motivo de inclusão manual) — usado para enriquecer a
+	// auditoria com EquipamentoId/Motivo cruzando pelo id retornado nas próprias
+	// batidas (PunchPair.FonteDadosIDEntrada/FonteDadosIDSaida).
+	GetFonteDados(tenant *Tenant, start, end time.Time) ([]FonteDadoItem, error)
+}
+
+// FonteDadoItem é um registro de origem de marcação da Secullum (endpoint FonteDados).
+// O Id é a chave de correlação com PunchPair.FonteDadosIDEntrada/FonteDadosIDSaida.
+type FonteDadoItem struct {
+	ID            int
+	EquipamentoID *int
+	Motivo        *string
 }

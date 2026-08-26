@@ -80,6 +80,20 @@ type secullumPunchResponse struct {
 	EquipIdSaida4   *int `json:"EquipIdSaida4"`
 	EquipIdEntrada5 *int `json:"EquipIdEntrada5"`
 	EquipIdSaida5   *int `json:"EquipIdSaida5"`
+
+	// FonteDadosId* identificam, por marcação, o registro correspondente no endpoint
+	// FonteDados — é a chave de correlação usada para enriquecer a auditoria com
+	// EquipamentoId/Motivo (ver domain.SecullumService.GetFonteDados).
+	FonteDadosIdEntrada1 *int `json:"FonteDadosIdEntrada1"`
+	FonteDadosIdSaida1   *int `json:"FonteDadosIdSaida1"`
+	FonteDadosIdEntrada2 *int `json:"FonteDadosIdEntrada2"`
+	FonteDadosIdSaida2   *int `json:"FonteDadosIdSaida2"`
+	FonteDadosIdEntrada3 *int `json:"FonteDadosIdEntrada3"`
+	FonteDadosIdSaida3   *int `json:"FonteDadosIdSaida3"`
+	FonteDadosIdEntrada4 *int `json:"FonteDadosIdEntrada4"`
+	FonteDadosIdSaida4   *int `json:"FonteDadosIdSaida4"`
+	FonteDadosIdEntrada5 *int `json:"FonteDadosIdEntrada5"`
+	FonteDadosIdSaida5   *int `json:"FonteDadosIdSaida5"`
 }
 
 // equipIDs devolve os aparelhos usados no dia, sem nulos e sem repetição, na ordem em que
@@ -109,11 +123,11 @@ func (r secullumPunchResponse) equipIDs() []int {
 // contagem ímpar de marcações é o sinal da regra de batida esquecida).
 func (r secullumPunchResponse) marcacoes() []domain.PunchPair {
 	return []domain.PunchPair{
-		{Entrada: normalizeTime(r.Entrada1), Saida: normalizeTime(r.Saida1)},
-		{Entrada: normalizeTime(r.Entrada2), Saida: normalizeTime(r.Saida2)},
-		{Entrada: normalizeTime(r.Entrada3), Saida: normalizeTime(r.Saida3)},
-		{Entrada: normalizeTime(r.Entrada4), Saida: normalizeTime(r.Saida4)},
-		{Entrada: normalizeTime(r.Entrada5), Saida: normalizeTime(r.Saida5)},
+		{Entrada: normalizeTime(r.Entrada1), Saida: normalizeTime(r.Saida1), FonteDadosIDEntrada: r.FonteDadosIdEntrada1, FonteDadosIDSaida: r.FonteDadosIdSaida1},
+		{Entrada: normalizeTime(r.Entrada2), Saida: normalizeTime(r.Saida2), FonteDadosIDEntrada: r.FonteDadosIdEntrada2, FonteDadosIDSaida: r.FonteDadosIdSaida2},
+		{Entrada: normalizeTime(r.Entrada3), Saida: normalizeTime(r.Saida3), FonteDadosIDEntrada: r.FonteDadosIdEntrada3, FonteDadosIDSaida: r.FonteDadosIdSaida3},
+		{Entrada: normalizeTime(r.Entrada4), Saida: normalizeTime(r.Saida4), FonteDadosIDEntrada: r.FonteDadosIdEntrada4, FonteDadosIDSaida: r.FonteDadosIdSaida4},
+		{Entrada: normalizeTime(r.Entrada5), Saida: normalizeTime(r.Saida5), FonteDadosIDEntrada: r.FonteDadosIdEntrada5, FonteDadosIDSaida: r.FonteDadosIdSaida5},
 	}
 }
 
@@ -143,6 +157,11 @@ type secullumFuncionarioResponse struct {
 	Horario     struct {
 		Numero int `json:"Numero"`
 	} `json:"Horario"`
+
+	// Admissao/Demissao vêm como data-hora ISO ("2006-01-02T15:04:05"). Demissao nula
+	// significa funcionário ativo.
+	Admissao *string `json:"Admissao"`
+	Demissao *string `json:"Demissao"`
 }
 
 // secullumHorarioResponse mapeia a jornada contratual (por dia da semana) de um
@@ -356,6 +375,8 @@ func (c *secullumClient) GetCollaborators(tenant *domain.Tenant) ([]domain.Colla
 
 	collaborators := make([]domain.Collaborator, 0, len(rawResponses))
 	for _, raw := range rawResponses {
+		admissao := parseSecullumDateTime(raw.Admissao)
+		demissao := parseSecullumDateTime(raw.Demissao)
 		collaborators = append(collaborators, domain.Collaborator{
 			TenantID:      tenant.ID,
 			SecullumID:    raw.Id,
@@ -364,10 +385,27 @@ func (c *secullumClient) GetCollaborators(tenant *domain.Tenant) ([]domain.Colla
 			Celular:       raw.Celular,
 			NumeroFolha:   raw.NumeroFolha,
 			HorarioNumero: raw.Horario.Numero,
+			Admissao:      admissao,
+			Demissao:      demissao,
+			Demitido:      demissao != nil,
 		})
 	}
 
 	return collaborators, nil
+}
+
+// parseSecullumDateTime interpreta um campo de data-hora ISO da Secullum
+// ("2006-01-02T15:04:05"). Nulo ou ilegível devolve nil — nunca inventa uma data.
+func parseSecullumDateTime(v *string) *time.Time {
+	if v == nil {
+		return nil
+	}
+	t, err := time.Parse("2006-01-02T15:04:05", *v)
+	if err != nil {
+		log.Printf("[Aviso Secullum] data-hora inválida %q: %v", *v, err)
+		return nil
+	}
+	return &t
 }
 
 // GetHorario busca a jornada contratual (um registro por dia da semana) associada ao
@@ -420,4 +458,89 @@ func (c *secullumClient) GetHorario(tenant *domain.Tenant, numero int) ([]domain
 	}
 
 	return schedules, nil
+}
+
+// secullumEquipamentoResponse mapeia um aparelho (relógio de ponto) cadastrado na Secullum.
+type secullumEquipamentoResponse struct {
+	Id         int     `json:"Id"`
+	Descricao  string  `json:"Descricao"`
+	EnderecoIP *string `json:"EnderecoIP"`
+}
+
+// GetEquipamentos busca os aparelhos cadastrados na Secullum para o tenant.
+func (c *secullumClient) GetEquipamentos(tenant *domain.Tenant) ([]domain.Equipment, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	endpoint := fmt.Sprintf("%s/IntegracaoExterna/Equipamentos", c.baseURL)
+
+	resp, err := c.do(ctx, http.MethodGet, endpoint, tenant)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, statusError("equipamentos", resp)
+	}
+
+	var rawResponses []secullumEquipamentoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rawResponses); err != nil {
+		return nil, err
+	}
+
+	equipments := make([]domain.Equipment, 0, len(rawResponses))
+	for _, raw := range rawResponses {
+		equipments = append(equipments, domain.Equipment{
+			TenantID:   tenant.ID,
+			SecullumID: raw.Id,
+			Descricao:  raw.Descricao,
+			EnderecoIP: raw.EnderecoIP,
+		})
+	}
+
+	return equipments, nil
+}
+
+// secullumFonteDadoResponse mapeia um registro de origem de marcação (endpoint FonteDados).
+type secullumFonteDadoResponse struct {
+	Id            int     `json:"Id"`
+	EquipamentoId *int    `json:"EquipamentoId"`
+	Motivo        *string `json:"Motivo"`
+}
+
+// GetFonteDados busca a origem de cada marcação registrada no período informado —
+// cruzada, pelo Id, com PunchPair.FonteDadosIDEntrada/FonteDadosIDSaida para preencher
+// EquipamentoId/Motivo na auditoria.
+func (c *secullumClient) GetFonteDados(tenant *domain.Tenant, start, end time.Time) ([]domain.FonteDadoItem, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	endpoint := fmt.Sprintf("%s/IntegracaoExterna/FonteDados?DataInicio=%s&DataFim=%s", c.baseURL, start.Format("2006-01-02"), end.Format("2006-01-02"))
+
+	resp, err := c.do(ctx, http.MethodGet, endpoint, tenant)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, statusError("fonte de dados", resp)
+	}
+
+	var rawResponses []secullumFonteDadoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rawResponses); err != nil {
+		return nil, err
+	}
+
+	items := make([]domain.FonteDadoItem, 0, len(rawResponses))
+	for _, raw := range rawResponses {
+		items = append(items, domain.FonteDadoItem{
+			ID:            raw.Id,
+			EquipamentoID: raw.EquipamentoId,
+			Motivo:        raw.Motivo,
+		})
+	}
+
+	return items, nil
 }
