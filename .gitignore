@@ -1,7 +1,10 @@
 .env
 data/
 graphify-out/
+.claude
+.agents
 
 # MemPalace per-project files (issue #185)
 mempalace.yaml
 entities.json
+skills-lock.json
