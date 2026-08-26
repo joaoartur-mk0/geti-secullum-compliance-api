@@ -215,7 +215,16 @@ Testes: `TestScheduler_TickPublicaNotifyTrue`,
 
 ## 5. Frontend: o que passou a consumir tudo isso
 
-### 5.1 `/reports/history` (`frontend/src/pages/ReportsHistory.tsx`)
+### 5.1 `/reports/history` — **removida do frontend** (backend inalterado)
+
+> **Atualização:** a página `frontend/src/pages/ReportsHistory.tsx` descrita abaixo foi
+> **removida** a pedido do usuário ("retire a página que mostra o histórico geral de
+> auditorias, apenas a que mostra a mais recente dia a dia"). O endpoint
+> `GET /tenants/:id/reports/history` continua existindo no backend (nada mudou lá — outro
+> consumidor pode voltar a usá-lo), só não há mais nenhuma tela do painel chamando-o. O
+> método `api.listReportHistory` e o item de menu "Registro de execuções" também foram
+> removidos do frontend junto com a página. `/auditorias` (Situação por dia, 5.2) é agora a
+> única visão de relatórios no painel. Texto original, mantido como histórico:
 
 Página nova ("Registro de execuções" no menu), substitui a antiga `/configuracoes/logs`. Consome `GET /reports/history` de
 verdade (antes era interino, apontando para o `GET /reports` antigo). Tabela com sort por
@@ -227,7 +236,8 @@ ainda não expõe quem disparou cada execução.
 
 - Ganhou um segundo picker, **"Auditar um período"** (De/Até, até 62 dias), ao lado do
   já existente "Auditar um dia" — chama `api.triggerAuditRange`.
-- O link "Ver histórico completo" aponta para `/reports/history`.
+- ~~O link "Ver histórico completo" aponta para `/reports/history`.~~ Removido junto com a
+  página (ver 5.1).
 - Parou de deduplicar no cliente (`dedupeByDay` removido — `GET /reports` já vem
   deduplicado do backend).
 
