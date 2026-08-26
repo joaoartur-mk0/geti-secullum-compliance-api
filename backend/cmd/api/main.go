@@ -43,6 +43,7 @@ func main() {
 		&models.TenantSettings{},
 		&models.Collaborator{},
 		&models.CollaboratorSchedule{},
+		&models.PunchRecord{},
 		&models.Staff{},
 		&models.Report{},
 		&models.User{},
@@ -99,6 +100,7 @@ func main() {
 	tenantRepo := repositories.NewTenantRepository(db)
 	reportRepo := repositories.NewReportRepository(db)
 	collabRepo := repositories.NewCollaboratorRepository(db)
+	punchRecordRepo := repositories.NewPunchRecordRepository(db)
 
 	// Serviços Externos (Client HTTP da API Secullum).
 	// Credenciais GLOBAIS (mesma para todos os tenants), vindas de env. O client cuida
@@ -154,7 +156,7 @@ func main() {
 	// =====================================================================
 	// 4. INICIALIZAÇÃO DOS WORKERS (CONSUMERS DO RABBITMQ)
 	// =====================================================================
-	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, collabRepo, secullumSvc, reportRepo, auditorCore, reconciler, publisherPool, evolutionPrefix)
+	auditConsumer := messaging.NewAuditConsumer(ch, tenantRepo, collabRepo, secullumSvc, reportRepo, punchRecordRepo, auditorCore, reconciler, publisherPool, evolutionPrefix)
 
 	// A palavra reservada 'go' faz esta função rodar em background.
 	// Assim, ela fica a escutar a fila infinitamente sem parar o servidor web.

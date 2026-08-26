@@ -15,15 +15,16 @@ import (
 )
 
 type AuditConsumer struct {
-	channel        *amqp.Channel
-	tenantRepo     domain.TenantRepository
-	collabRepo     domain.CollaboratorRepository
-	secullumSvc    domain.SecullumService
-	reportRepo     domain.ReportRepository
-	auditorCore    *usecase.AuditorService
-	reconciler     *usecase.ReconcilerService
-	publisher      *ChannelPool
-	instancePrefix string // prefixo p/ derivar a instância de WhatsApp do tenant
+	channel         *amqp.Channel
+	tenantRepo      domain.TenantRepository
+	collabRepo      domain.CollaboratorRepository
+	secullumSvc     domain.SecullumService
+	reportRepo      domain.ReportRepository
+	punchRecordRepo domain.PunchRecordRepository
+	auditorCore     *usecase.AuditorService
+	reconciler      *usecase.ReconcilerService
+	publisher       *ChannelPool
+	instancePrefix  string // prefixo p/ derivar a instância de WhatsApp do tenant
 }
 
 func NewAuditConsumer(
@@ -32,21 +33,23 @@ func NewAuditConsumer(
 	cr domain.CollaboratorRepository,
 	ss domain.SecullumService,
 	rr domain.ReportRepository,
+	prr domain.PunchRecordRepository,
 	ac *usecase.AuditorService,
 	rc *usecase.ReconcilerService,
 	publisher *ChannelPool,
 	instancePrefix string,
 ) *AuditConsumer {
 	return &AuditConsumer{
-		channel:        ch,
-		tenantRepo:     tr,
-		collabRepo:     cr,
-		secullumSvc:    ss,
-		reportRepo:     rr,
-		auditorCore:    ac,
-		reconciler:     rc,
-		publisher:      publisher,
-		instancePrefix: instancePrefix,
+		channel:         ch,
+		tenantRepo:      tr,
+		collabRepo:      cr,
+		secullumSvc:     ss,
+		reportRepo:      rr,
+		punchRecordRepo: prr,
+		auditorCore:     ac,
+		reconciler:      rc,
+		publisher:       publisher,
+		instancePrefix:  instancePrefix,
 	}
 }
 
@@ -179,11 +182,18 @@ func (c *AuditConsumer) processMessage(msg amqp.Delivery) {
 	}
 	punchesByDay := indexPunchesByDay(punches)
 
+	// 5b. Busca, no MESMO período, a origem de cada marcação (FonteDados) para
+	// enriquecer a auditoria com equipamento/motivo — cruzando pelo Id que a própria
+	// resposta de batidas já traz (PunchPair.FonteDadosIDEntrada/FonteDadosIDSaida).
+	// Falha aqui NÃO aborta a auditoria (é um enriquecimento, não o dado principal):
+	// fica registrada e os relatórios seguem sem equipamento/motivo neste ciclo.
+	fonteDadosByID := c.fetchFonteDadosByID(tenant, rangeStart, rangeEnd)
+
 	// 6. Audita cada dia do período separadamente, salvando um relatório por dia — é
 	// isso que permite consultar/filtrar dias específicos depois, mesmo quando a
 	// auditoria foi disparada para um período inteiro de uma vez.
 	for _, diaAlvo := range dias {
-		resumo, inconsistencies, err := c.auditDay(tenant, collaborators, diaAlvo, punchesByDay)
+		resumo, inconsistencies, err := c.auditDay(tenant, collaborators, diaAlvo, punchesByDay, fonteDadosByID)
 		if err != nil {
 			// Sem reconciliar/salvar, o estado do dia fica pela metade: devolve à fila
 			// para retry. Dias já processados com sucesso antes deste no mesmo período
@@ -225,12 +235,14 @@ func (c *AuditConsumer) auditDay(
 	collaborators []domain.Collaborator,
 	diaAlvo time.Time,
 	punchesByDay map[string]map[int]domain.DailyPunch,
+	fonteDadosByID map[int]domain.FonteDadoItem,
 ) (usecase.ReconcileResult, []domain.AuditInconsistency, error) {
 	mapaAlvo := punchesByDay[diaAlvo.Format("2006-01-02")]
 	mapaAnterior := punchesByDay[diaAlvo.AddDate(0, 0, -1).Format("2006-01-02")]
 
 	// Audita CADA colaborador sincronizado do tenant.
 	var inconsistencies []domain.AuditInconsistency
+	var punchRecords []domain.PunchRecord
 	for i := range collaborators {
 		collab := collaborators[i]
 
@@ -242,6 +254,8 @@ func (c *AuditConsumer) auditDay(
 			// nil pointer, já que o motor de regras espera um *DailyPunch sempre válido
 			// para o dia alvo.
 			punchAlvo = domain.DailyPunch{CollaboratorID: collab.SecullumID, Date: diaAlvo}
+		} else if rec, found := buildPunchRecord(tenant.ID, collab.SecullumID, diaAlvo, punchAlvo, fonteDadosByID); found {
+			punchRecords = append(punchRecords, rec)
 		}
 		punchAnteriorPtr := (*domain.DailyPunch)(nil)
 		if p, ok := mapaAnterior[collab.SecullumID]; ok {
@@ -291,6 +305,16 @@ func (c *AuditConsumer) auditDay(
 	}
 	if err := c.reportRepo.Save(report); err != nil {
 		return usecase.ReconcileResult{}, nil, fmt.Errorf("falha ao salvar relatório de %s: %w", diaAlvo.Format("2006-01-02"), err)
+	}
+
+	// Persiste o enriquecimento de equipamento/motivo apurado para o dia. É informação
+	// auxiliar (não a auditoria em si): uma falha aqui é registrada, mas não derruba o
+	// dia já reconciliado e salvo acima.
+	if c.punchRecordRepo != nil && len(punchRecords) > 0 {
+		if err := c.punchRecordRepo.SaveAll(punchRecords); err != nil {
+			log.Printf("[Aviso Auditoria] Tenant %d, dia %s: falha ao salvar equipamento/motivo das marcações: %v\n",
+				tenant.ID, diaAlvo.Format("2006-01-02"), err)
+		}
 	}
 
 	return resumo, inconsistencies, nil
@@ -446,6 +470,58 @@ func (c *AuditConsumer) reconcile(tenantID int, dia time.Time, inconsistencies [
 		return usecase.ReconcileResult{}, nil
 	}
 	return c.reconciler.Reconcile(tenantID, dia, inconsistencies, time.Now())
+}
+
+// fetchFonteDadosByID busca a origem das marcações do período (FonteDados) e indexa por
+// Id — a chave usada para cruzar com PunchPair.FonteDadosIDEntrada/FonteDadosIDSaida. Uma
+// falha na chamada é só registrada: o enriquecimento é auxiliar, não deve reprocessar (ou
+// bloquear) a auditoria inteira, cujo dado principal já foi obtido em GetDailyPunchesRange.
+func (c *AuditConsumer) fetchFonteDadosByID(tenant *domain.Tenant, start, end time.Time) map[int]domain.FonteDadoItem {
+	items, err := c.secullumSvc.GetFonteDados(tenant, start, end)
+	if err != nil {
+		log.Printf("[Aviso Auditoria] Tenant %d: falha ao buscar FonteDados de %s a %s (auditoria segue sem equipamento/motivo): %v\n",
+			tenant.ID, start.Format("2006-01-02"), end.Format("2006-01-02"), err)
+		return nil
+	}
+
+	byID := make(map[int]domain.FonteDadoItem, len(items))
+	for _, item := range items {
+		byID[item.ID] = item
+	}
+	return byID
+}
+
+// buildPunchRecord procura, entre as marcações do dia, a primeira com correspondência em
+// FonteDados (pelo Id que a própria batida já traz) e devolve o registro de enriquecimento
+// do dia. found=false quando não há Id de fonte de dados no dia, ou nenhum bate com o
+// período consultado — caso registrado (não é erro: cadastro incompleto/marcação sem
+// origem rastreada), mas não impede a auditoria de seguir.
+func buildPunchRecord(tenantID, collaboratorID int, date time.Time, punch domain.DailyPunch, fonteDadosByID map[int]domain.FonteDadoItem) (domain.PunchRecord, bool) {
+	if len(fonteDadosByID) == 0 {
+		return domain.PunchRecord{}, false
+	}
+
+	for _, pair := range punch.Marcacoes {
+		for _, fonteID := range []*int{pair.FonteDadosIDEntrada, pair.FonteDadosIDSaida} {
+			if fonteID == nil {
+				continue
+			}
+			item, ok := fonteDadosByID[*fonteID]
+			if !ok {
+				log.Printf("[Aviso Auditoria] Tenant %d, colaborador %d, dia %s: FonteDados id %d sem correspondência no período consultado.\n",
+					tenantID, collaboratorID, date.Format("2006-01-02"), *fonteID)
+				continue
+			}
+			return domain.PunchRecord{
+				TenantID:       tenantID,
+				CollaboratorID: collaboratorID,
+				Date:           date,
+				EquipamentoID:  item.EquipamentoID,
+				Motivo:         item.Motivo,
+			}, true
+		}
+	}
+	return domain.PunchRecord{}, false
 }
 
 // indexPunchesByCollaborator agrupa as batidas por id de colaborador (Secullum) para
