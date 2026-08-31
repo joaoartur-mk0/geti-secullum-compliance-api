@@ -48,8 +48,15 @@ export function isValidPhone(input: string): boolean {
 // Só dias já encerrados (antes de hoje) podem ser auditados sob demanda — o backend
 // recusa hoje/futuro (ver TriggerRequest.resolveDate no handler de auditoria). Usado como
 // limite máximo em qualquer seletor de data ligado a auditoria.
+// Formata pelos componentes LOCAIS da data, não por toISOString().
+//
+// `toISOString` converte para UTC: a partir das 21h no horário de Brasília (UTC-3), o
+// "ontem" local já é "hoje" em UTC, e a função devolvia a data de hoje. O seletor então
+// oferecia como limite um dia que o backend recusa auditar — bug silencioso que só
+// aparecia no fim da noite.
 export function yesterday(): string {
   const d = new Date()
   d.setDate(d.getDate() - 1)
-  return d.toISOString().slice(0, 10)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }

@@ -31,6 +31,7 @@ import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
 import { CATEGORY_ORDER } from '../lib/categories'
 import { formatDate, formatDateTime, yesterday } from '../lib/format'
+import { isoDaysAgo, isoStartOfMonth } from '../lib/periods'
 import type {
   AuditInconsistency,
   Branch,
@@ -62,19 +63,10 @@ const TYPE_ORDER = [
 // já ficam bem abaixo disso e aparecem por completo.
 const MAX_CHART_BARS = 62
 
-// isoDaysAgo devolve a data de N dias atrás no formato "YYYY-MM-DD", para os presets de
-// período (7 dias, 30 dias).
-function isoDaysAgo(n: number): string {
-  const d = new Date()
-  d.setDate(d.getDate() - n)
-  return d.toISOString().slice(0, 10)
-}
-
-// isoStartOfMonth devolve o primeiro dia do mês corrente, para o preset "Este mês".
-function isoStartOfMonth(): string {
-  const d = new Date()
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
-}
+// isoDaysAgo e isoStartOfMonth vêm de lib/periods.ts (import acima). As versões locais
+// que existiam aqui usavam toISOString(), que converte para UTC: depois das 21h no
+// horário de Brasília, "7 dias atrás" virava "6 dias atrás". Mesma classe do bug de
+// yesterday() em lib/format.ts.
 
 const nf = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 })
 
@@ -852,7 +844,9 @@ function IncidentShortcuts({
   )
 
   return (
-    <section aria-label="Atalhos de ocorrências por severidade" className="grid grid-cols-3 gap-3">
+    // 2 colunas no mobile (como o restante dos grids de KPI da página) — em grid-cols-3
+    // fixo, o rótulo "OPERACIONAIS" espremia o card e estourava a largura da tela.
+    <section aria-label="Atalhos de ocorrências por severidade" className="grid grid-cols-2 gap-3 lg:grid-cols-3">
       <ShortcutCard
         icon={<OctagonAlert size={17} aria-hidden />}
         label="Críticas"
@@ -1172,7 +1166,12 @@ function TrendChart({
           A tendência aparece a partir de duas varreduras. Continue auditando para acompanhar a evolução.
         </p>
       ) : (
-        <div className="flex h-40 items-stretch gap-1.5">
+        // overflow-x-auto: com muitas varreduras (30 dias, mês, tudo) as colunas não podem
+        // encolher abaixo de um mínimo legível — em vez de espremer a ponto do rótulo de
+        // data virar um único caractere no mobile, a faixa de barras rola horizontalmente
+        // dentro do próprio card (mesmo padrão usado nas tabelas largas do projeto).
+        <div className="overflow-x-auto">
+          <div className="flex h-40 items-stretch gap-1.5">
           {series.map((s) => {
             const heightPct = max > 0 ? (s.total / max) * 100 : 0
             const critShare = s.total > 0 ? (s.critical / s.total) * 100 : 0
@@ -1185,7 +1184,7 @@ function TrendChart({
                 aria-pressed={isSelected}
                 aria-label={`Ver indicadores de ${formatDate(s.date)}`}
                 title={`${formatDate(s.date)} — ${s.total} inconsistência(s): ${s.critical} crítica(s), ${s.alert} alerta(s)`}
-                className="flex min-w-0 flex-1 flex-col items-center gap-1.5 rounded-field transition-colors duration-150 hover:bg-panel"
+                className="flex min-w-8 flex-1 flex-col items-center gap-1.5 rounded-field transition-colors duration-150 hover:bg-panel"
               >
                 <div className="flex w-full flex-1 items-end justify-center">
                   {s.total === 0 ? (
@@ -1212,6 +1211,7 @@ function TrendChart({
               </button>
             )
           })}
+          </div>
         </div>
       )}
     </section>
