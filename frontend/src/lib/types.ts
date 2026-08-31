@@ -163,6 +163,17 @@ export interface OccurrenceEvent {
   created_at: string
 }
 
+// ---------- Origem da marcação (enriquecimento por FonteDados) ----------
+
+// Um dia AUSENTE da resposta significa que a auditoria daquele dia não achou
+// correspondência na FonteDados da Secullum — NÃO que o colaborador faltou. A tela precisa
+// dizer "—" para o dia sem registro, nunca omitir a linha.
+export interface PunchRecord {
+  date: string // "YYYY-MM-DD"
+  equipamento_id: number | null
+  motivo: string | null
+}
+
 // ---------- Equipamentos (relógios de ponto, espelho da Secullum) ----------
 
 // Somente leitura: o cadastro vive na Secullum, sincronizado por

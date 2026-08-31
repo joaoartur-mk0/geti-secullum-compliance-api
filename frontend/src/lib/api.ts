@@ -19,6 +19,7 @@ import type {
   Occurrence,
   OccurrenceEvent,
   OccurrenceState,
+  PunchRecord,
   RegisterUserRequest,
   Report,
   Settings,
@@ -302,6 +303,13 @@ export const api = {
     request<CollaboratorPrefill>(
       `/api/v1/tenants/${tenantId}/collaborators/${secullumId}/prefill${date ? `?date=${date}` : ''}`,
     ),
+
+  // Origem da marcação (equipamento e motivo) por dia auditado. start/end são
+  // OBRIGATÓRIOS juntos — o backend devolve 400 VALIDATION se faltar um dos dois.
+  listPunchRecords: (tenantId: number, secullumId: number, startDate: string, endDate: string) =>
+    request<{ punch_records: PunchRecord[] | null; total: number }>(
+      `/api/v1/tenants/${tenantId}/collaborators/${secullumId}/punch-records?start_date=${startDate}&end_date=${endDate}`,
+    ).then((r) => r.punch_records ?? []),
 
   // ---------- Equipamentos (somente leitura, espelho da Secullum) ----------
 

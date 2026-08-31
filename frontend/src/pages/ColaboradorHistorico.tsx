@@ -3,9 +3,14 @@ import {
   Ban,
   Building2,
   CalendarClock,
+  ChevronLeft,
+  ChevronRight,
   Clock,
+  Fingerprint,
   OctagonAlert,
+  PenLine,
   TrendingUp,
+  Watch,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
@@ -13,6 +18,7 @@ import type { ReactNode } from 'react'
 import {
   Button,
   CategoryBadge,
+  EmptyState,
   ErrorNote,
   Field,
   OccurrenceStateBadge,
@@ -26,7 +32,16 @@ import { useTenant } from '../layouts/AppShell'
 import { api, ApiError } from '../lib/api'
 import { formatDate, formatDateTime, formatPhone } from '../lib/format'
 import { findLink, MISSING_PAYROLL, setFilial } from '../lib/lotacao'
-import type { Branch, CollaboratorHistoryEntry, CollaboratorPrefill, Occurrence } from '../lib/types'
+import { isoDaysAgo, isoStartOfMonth, today } from '../lib/periods'
+import type { Period } from '../lib/periods'
+import type {
+  Branch,
+  CollaboratorHistoryEntry,
+  CollaboratorPrefill,
+  Equipment,
+  Occurrence,
+  PunchRecord,
+} from '../lib/types'
 
 const ALL_STATES = ['aberta', 'atualizada', 'resolvida_automatica', 'resolvida_manual'] as const
 
@@ -90,7 +105,7 @@ export default function ColaboradorHistorico() {
       {state.phase === 'loading' && (
         <div className="mt-4 flex flex-col gap-6">
           <Skeleton className="h-9 w-64" />
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className="h-24 w-full" />
             ))}
@@ -147,7 +162,7 @@ function Detail({
         </p>
       </header>
 
-      <section aria-label="Resumo de ocorrências" className="mt-6 grid grid-cols-3 gap-3">
+      <section aria-label="Resumo de ocorrências" className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-3">
         <Stat
           icon={<TrendingUp size={17} aria-hidden />}
           label="Em aberto"
@@ -191,6 +206,8 @@ function Detail({
           </ul>
         )}
       </section>
+
+      <OrigemMarcacoes secullumId={secullumId} occurrences={occurrences} />
 
       <section aria-label="Advertências" className="mt-8">
         <WarningPanel collaboratorId={secullumId} collaboratorName={name} branchId={prefill?.filial?.id ?? null} />
@@ -334,6 +351,251 @@ function BranchCard({ prefill, onLinked }: { prefill: CollaboratorPrefill; onLin
         </p>
       )}
     </div>
+  )
+}
+
+// ---------- Origem das marcações ----------
+//
+// SPEC-05: bloco novo, alimentado por api.listPunchRecords, que nunca teve UI. Carrega
+// separado do resto da ficha (Loadable próprio) porque uma falha aqui não pode impedir a
+// ficha de abrir — mesmo espírito do prefill acima.
+
+// Preset próprio deste bloco: a ficha não tem filtro de período em querystring hoje, e
+// criar um mudaria comportamento existente da página (proibido pela spec). "90 dias" não
+// existe como preset em lib/periods.ts — compomos a partir de isoDaysAgo, que é exportada.
+type OrigemPreset = '30' | '90' | 'mes'
+
+const ORIGEM_PRESET_LABEL: Record<OrigemPreset, string> = {
+  '30': '30 dias',
+  '90': '90 dias',
+  mes: 'Este mês',
+}
+
+function origemPeriod(preset: OrigemPreset): Period {
+  switch (preset) {
+    case '30':
+      return { start: isoDaysAgo(30), end: today() }
+    case '90':
+      return { start: isoDaysAgo(90), end: today() }
+    case 'mes':
+      return { start: isoStartOfMonth(), end: today() }
+  }
+}
+
+interface OrigemData {
+  records: PunchRecord[]
+  equipamentos: Equipment[]
+}
+
+type OrigemLoadable =
+  | { phase: 'loading' }
+  | { phase: 'error'; message: string }
+  | { phase: 'ready'; data: OrigemData }
+
+const ORIGEM_PAGE_SIZE = 20
+
+function OrigemMarcacoes({ secullumId, occurrences }: { secullumId: number; occurrences: Occurrence[] }) {
+  const { tenant } = useTenant()
+  const [preset, setPreset] = useState<OrigemPreset>('30')
+  const [state, setState] = useState<OrigemLoadable>({ phase: 'loading' })
+  const [page, setPage] = useState(1)
+
+  const period = useMemo(() => origemPeriod(preset), [preset])
+
+  const load = useCallback(() => {
+    setState({ phase: 'loading' })
+    Promise.all([api.listPunchRecords(tenant.id, secullumId, period.start, period.end), api.listEquipamentos(tenant.id)])
+      .then(([records, { equipamentos }]) => setState({ phase: 'ready', data: { records, equipamentos } }))
+      .catch((error) => {
+        setState({
+          phase: 'error',
+          message: error instanceof ApiError ? error.message : 'Erro ao carregar a origem das marcações.',
+        })
+      })
+  }, [tenant.id, secullumId, period.start, period.end])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  // Troca de período volta pra primeira página — mesmo motivo do Incidentes.tsx: evita
+  // cair numa página vazia depois que a lista muda de tamanho.
+  useEffect(() => {
+    setPage(1)
+  }, [preset])
+
+  // Cruzamento com as ocorrências que a ficha já carregou (SPEC-05 §3.4) — sem consulta nova.
+  const occurrenceDates = useMemo(() => new Set(occurrences.map((o) => o.date)), [occurrences])
+
+  return (
+    <section aria-label="Origem das marcações" className="mt-8">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold text-ink-soft">Origem das marcações</h2>
+        <Select
+          aria-label="Período da origem das marcações"
+          value={preset}
+          onChange={(e) => setPreset(e.target.value as OrigemPreset)}
+          className="min-h-9 py-0 text-xs"
+        >
+          {(Object.keys(ORIGEM_PRESET_LABEL) as OrigemPreset[]).map((p) => (
+            <option key={p} value={p}>
+              {ORIGEM_PRESET_LABEL[p]}
+            </option>
+          ))}
+        </Select>
+      </div>
+
+      {state.phase === 'loading' && (
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-20 w-full" />
+            ))}
+          </div>
+          <Skeleton className="h-40 w-full" />
+        </div>
+      )}
+
+      {state.phase === 'error' && <ErrorNote message={state.message} onRetry={load} />}
+
+      {state.phase === 'ready' && (
+        <OrigemMarcacoesContent data={state.data} occurrenceDates={occurrenceDates} page={page} setPage={setPage} />
+      )}
+    </section>
+  )
+}
+
+function OrigemMarcacoesContent({
+  data,
+  occurrenceDates,
+  page,
+  setPage,
+}: {
+  data: OrigemData
+  occurrenceDates: Set<string>
+  page: number
+  setPage: (updater: (p: number) => number) => void
+}) {
+  const { records, equipamentos } = data
+
+  const equipmentBySecullumId = useMemo(() => new Map(equipamentos.map((e) => [e.secullum_id, e])), [equipamentos])
+
+  function equipmentLabel(id: number | null): string {
+    if (id == null) return '—'
+    // Espelho pode estar desatualizado em relação à Secullum — nunca deixar em branco
+    // (SPEC-05 §2): o número cru ainda identifica o relógio, mesmo sem descrição.
+    const eq = equipmentBySecullumId.get(id)
+    return eq ? eq.descricao : `Equipamento #${id}`
+  }
+
+  const sorted = useMemo(() => [...records].sort((a, b) => b.date.localeCompare(a.date)), [records])
+
+  const total = sorted.length
+  const fromClock = useMemo(() => sorted.filter((r) => r.equipamento_id != null).length, [sorted])
+  const manual = useMemo(() => sorted.filter((r) => r.motivo != null).length, [sorted])
+
+  const totalPages = Math.max(1, Math.ceil(total / ORIGEM_PAGE_SIZE))
+  const pageRows = sorted.slice((page - 1) * ORIGEM_PAGE_SIZE, page * ORIGEM_PAGE_SIZE)
+
+  if (total === 0) {
+    return (
+      <EmptyState
+        icon={<Fingerprint size={32} strokeWidth={1.5} />}
+        title="Nenhuma origem apurada no período"
+        description="Isso significa que a auditoria não encontrou correspondência na Secullum — não que houve falta."
+      />
+    )
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <Stat
+          icon={<Fingerprint size={17} aria-hidden />}
+          label="Dias com origem apurada"
+          value={String(total)}
+          hint="registros no período"
+          tone="neutral"
+        />
+        <Stat
+          icon={<Watch size={17} aria-hidden />}
+          label="De relógio"
+          value={String(fromClock)}
+          hint="batida no equipamento"
+          tone="neutral"
+        />
+        <Stat
+          icon={<PenLine size={17} aria-hidden />}
+          label="Manual / abono"
+          value={String(manual)}
+          hint="inserida à mão"
+          tone="neutral"
+        />
+      </div>
+
+      <div className="mt-4 overflow-x-auto rounded-card border border-line bg-bg shadow-card">
+        <table className="w-full min-w-[480px] text-left text-sm">
+          <thead>
+            <tr className="border-b border-line text-xs font-semibold uppercase tracking-wide text-ink-faint">
+              <th className="px-4 py-3">Data</th>
+              <th className="px-4 py-3">Equipamento</th>
+              <th className="px-4 py-3">Motivo</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {pageRows.map((r) => {
+              // A marca só faz sentido quando a origem foi manual: batida de relógio num
+              // dia com ocorrência não tem a mesma explicação (SPEC-05 §3.4).
+              const withOccurrence = r.motivo != null && occurrenceDates.has(r.date)
+              return (
+                <tr key={r.date} className="transition-colors duration-150 hover:bg-panel">
+                  <td className="px-4 py-3 text-ink-soft">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>{formatDate(r.date)}</span>
+                      {withOccurrence && (
+                        <span className="inline-flex items-center rounded-field bg-panel px-2 py-0.5 text-xs font-medium text-ink-soft">
+                          dia com ocorrência
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-ink-soft">{equipmentLabel(r.equipamento_id)}</td>
+                  <td className="px-4 py-3 text-ink-soft">{r.motivo ?? '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {totalPages > 1 && (
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <p className="text-xs text-ink-faint">
+            Página {page} de {totalPages}
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              aria-label="Página anterior"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-field text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronLeft size={16} aria-hidden />
+            </button>
+            <button
+              type="button"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              aria-label="Próxima página"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-field text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronRight size={16} aria-hidden />
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 

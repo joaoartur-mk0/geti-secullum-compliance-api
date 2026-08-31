@@ -9,10 +9,14 @@ import Empresa from './pages/Empresa'
 import Equipamentos from './pages/Equipamentos'
 import Filiais from './pages/Filiais'
 import Gestores from './pages/Gestores'
+import Historico from './pages/Historico'
 import Incidentes from './pages/Incidentes'
 import Indicadores from './pages/Indicadores'
+import Investigar from './pages/Investigar'
 import Login from './pages/Login'
 import Moderacao from './pages/Moderacao'
+import Ranking from './pages/Ranking'
+import RevisaoMensal from './pages/RevisaoMensal'
 import WhatsApp from './pages/WhatsApp'
 
 export default function App() {
@@ -34,6 +38,10 @@ export default function App() {
             <Route path="whatsapp" element={<WhatsApp />} />
             <Route path="empresa" element={<Empresa />} />
             <Route path="incidents" element={<Incidentes />} />
+            <Route path="historico" element={<Historico />} />
+            <Route path="ranking" element={<Ranking />} />
+            <Route path="revisao-mensal" element={<RevisaoMensal />} />
+            <Route path="investigar" element={<Investigar />} />
             <Route path="moderacao" element={<Moderacao />} />
           </Route>
         </Routes>
