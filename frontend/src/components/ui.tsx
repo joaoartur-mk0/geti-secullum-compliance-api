@@ -80,9 +80,15 @@ export function Input({ className = '', ...rest }: InputHTMLAttributes<HTMLInput
 
 export function Select({ className = '', children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
+    // Um <select> nativo cresce até a largura da opção mais longa (ex.: nome completo de
+    // colaborador) e estoura o cartão de filtro no mobile. `max-w-full` sozinho não basta
+    // quando o <select> está dentro de um <label> que é item de um pai `flex-wrap`: o
+    // label também dimensiona pelo conteúdo, então o 100% se resolve contra uma largura
+    // que o próprio conteúdo definiu. A contenção real é o `max-w-full` NO LABEL — este
+    // aqui é o complemento, não a solução.
     <select
       {...rest}
-      className={`min-h-11 rounded-field border border-line bg-bg px-3 text-sm text-ink transition-colors duration-150 hover:border-ink-faint focus:border-brand ${className}`}
+      className={`min-h-11 max-w-full rounded-field border border-line bg-bg px-3 text-sm text-ink transition-colors duration-150 hover:border-ink-faint focus:border-brand ${className}`}
     >
       {children}
     </select>

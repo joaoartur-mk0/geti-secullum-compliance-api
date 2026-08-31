@@ -171,11 +171,13 @@ function StaffRow({
         </div>
       ) : (
         <div className="flex items-center gap-1">
+          {/* min-h-11 min-w-11: alvo de toque de 37px (p-2.5 + ícone) ficava abaixo dos 44px
+              recomendados para mobile — mesmo padrão já usado no botão de fechar o menu. */}
           <button
             type="button"
             onClick={() => setMode('edit')}
             aria-label={`Editar ${staff.name}`}
-            className="rounded-field p-2.5 text-ink-faint transition-colors duration-150 hover:bg-panel hover:text-ink"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-field text-ink-faint transition-colors duration-150 hover:bg-panel hover:text-ink"
           >
             <Pencil size={17} />
           </button>
@@ -183,7 +185,7 @@ function StaffRow({
             type="button"
             onClick={() => setMode('confirm-delete')}
             aria-label={`Excluir ${staff.name}`}
-            className="rounded-field p-2.5 text-ink-faint transition-colors duration-150 hover:bg-critico-bg hover:text-critico"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-field text-ink-faint transition-colors duration-150 hover:bg-critico-bg hover:text-critico"
           >
             <Trash2 size={17} />
           </button>

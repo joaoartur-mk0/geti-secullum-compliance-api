@@ -236,7 +236,10 @@ function UserRow({
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-soft font-semibold text-brand">
         {initials(user.name)}
       </span>
-      <div className="min-w-0 flex-1">
+      {/* min-w-40 (não min-w-0): sem um piso, o bloco de nome/e-mail encolhia até quase
+          sumir no mobile em vez do <li> quebrar linha — o flex-wrap só empurra os
+          próximos itens quando este item tem um mínimo real para respeitar. */}
+      <div className="min-w-40 flex-1">
         <p className="flex flex-wrap items-center gap-2 truncate font-semibold">
           {user.name}
           {user.is_super_admin && (
@@ -269,7 +272,7 @@ function UserRow({
             type="button"
             onClick={() => setMode('confirm-delete')}
             aria-label={`Excluir ${user.name}`}
-            className="rounded-field p-2.5 text-ink-faint transition-colors duration-150 hover:bg-critico-bg hover:text-critico"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-field text-ink-faint transition-colors duration-150 hover:bg-critico-bg hover:text-critico"
           >
             <Trash2 size={17} />
           </button>
@@ -503,7 +506,9 @@ function TenantRow({
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand">
           <Building2 size={18} aria-hidden />
         </span>
-        <div className="min-w-0 flex-1">
+        {/* min-w-40 (não min-w-0): mesmo ajuste do card de usuário — sem um piso, o bloco
+            de nome encolhia até quase sumir no mobile em vez do <li> quebrar linha. */}
+        <div className="min-w-40 flex-1">
           <p className="truncate font-semibold">{tenant.name}</p>
           <p className="text-sm text-ink-soft">banco Secullum {tenant.secullum_database_id}</p>
         </div>
@@ -534,7 +539,7 @@ function TenantRow({
               type="button"
               onClick={() => setMode('confirm-delete')}
               aria-label={`Apagar ${tenant.name}`}
-              className="rounded-field p-2.5 text-ink-faint transition-colors duration-150 hover:bg-critico-bg hover:text-critico"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-field text-ink-faint transition-colors duration-150 hover:bg-critico-bg hover:text-critico"
             >
               <Trash2 size={17} />
             </button>
@@ -627,12 +632,14 @@ function TenantUserLinks({ tenant, onError }: { tenant: Tenant; onError: (messag
                 <span className="font-medium">{user.name}</span>{' '}
                 <span className="text-ink-soft">{user.email}</span>
               </span>
+              {/* min-h-11 min-w-11: alvo de toque de ~27px (p-1.5 + ícone) ficava abaixo dos
+                  44px recomendados para mobile. */}
               <button
                 type="button"
                 onClick={() => unlink(user)}
                 disabled={busy}
                 aria-label={`Desvincular ${user.name} de ${tenant.name}`}
-                className="shrink-0 rounded-field p-1.5 text-ink-faint transition-colors duration-150 hover:bg-critico-bg hover:text-critico disabled:opacity-50"
+                className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-field text-ink-faint transition-colors duration-150 hover:bg-critico-bg hover:text-critico disabled:opacity-50"
               >
                 <Unlink size={15} />
               </button>

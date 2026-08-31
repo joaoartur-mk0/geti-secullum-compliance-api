@@ -131,7 +131,9 @@ export default function Auditorias() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* flex-wrap: no mobile, HealthChip + os 3 botões não cabem numa linha só de 375px —
+            sem quebrar, o botão "Auditar agora" ficava cortado na borda da tela. */}
+        <div className="flex flex-wrap items-center gap-2">
           <HealthChip health={health} />
           <Button
             variant="secondary"

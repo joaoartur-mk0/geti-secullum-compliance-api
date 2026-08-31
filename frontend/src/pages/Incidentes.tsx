@@ -101,7 +101,7 @@ export default function Incidentes() {
 
       <section
         aria-label="Filtros"
-        className="mt-6 flex flex-wrap items-end gap-3 rounded-card border border-line bg-bg p-4 shadow-card"
+        className="mt-6 flex flex-wrap items-end gap-3 rounded-card border border-line bg-bg p-4 shadow-card [&>label]:max-w-full"
       >
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-ink">Severidade</span>
@@ -222,7 +222,7 @@ export default function Incidentes() {
                     disabled={page <= 1}
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     aria-label="Página anterior"
-                    className="flex min-h-9 min-w-9 items-center justify-center rounded-field text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex min-h-11 min-w-11 items-center justify-center rounded-field text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <ChevronLeft size={16} aria-hidden />
                   </button>
@@ -231,7 +231,7 @@ export default function Incidentes() {
                     disabled={page >= totalPages}
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     aria-label="Próxima página"
-                    className="flex min-h-9 min-w-9 items-center justify-center rounded-field text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex min-h-11 min-w-11 items-center justify-center rounded-field text-ink-soft transition-colors duration-150 hover:bg-panel hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <ChevronRight size={16} aria-hidden />
                   </button>
