@@ -94,10 +94,10 @@ func (r *occurrenceRepository) ListByTenantAndDate(tenantID int, date time.Time)
 	return out, nil
 }
 
-func (r *occurrenceRepository) List(filter domain.OccurrenceFilter) ([]domain.Occurrence, error) {
+func (r *occurrenceRepository) List(filter domain.OccurrenceFilter) ([]domain.Occurrence, int, error) {
 	const op = "occurrenceRepository.List"
 
-	q := r.db.Where("tenant_id = ?", filter.TenantID)
+	q := r.db.Model(&models.Occurrence{}).Where("tenant_id = ?", filter.TenantID)
 	if filter.StartDate != nil {
 		q = q.Where("date >= ?", domain.DayOf(*filter.StartDate))
 	}
@@ -111,20 +111,45 @@ func (r *occurrenceRepository) List(filter domain.OccurrenceFilter) ([]domain.Oc
 		}
 		q = q.Where("state IN ?", states)
 	}
+	if len(filter.Severities) > 0 {
+		severities := make([]string, 0, len(filter.Severities))
+		for _, s := range filter.Severities {
+			severities = append(severities, string(s))
+		}
+		q = q.Where("severity IN ?", severities)
+	}
+	if len(filter.Types) > 0 {
+		q = q.Where("type IN ?", filter.Types)
+	}
 	if filter.CollaboratorID != nil {
 		q = q.Where("collaborator_id = ?", *filter.CollaboratorID)
 	}
+	if len(filter.CollaboratorIDs) > 0 {
+		q = q.Where("collaborator_id IN ?", filter.CollaboratorIDs)
+	}
+
+	// O total reflete o FILTRO inteiro, não a página — contado antes de aplicar
+	// limit/offset, senão uma página de 20 sobre 300 resultados devolveria total=20.
+	var total int64
+	if err := q.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return nil, 0, domain.NewInternal(op, "falha ao contar ocorrências", err)
+	}
+
+	q = q.Order("date DESC, collaborator_id, type")
+	if filter.Limit > 0 {
+		q = q.Limit(filter.Limit).Offset(filter.Offset)
+	}
 
 	var rows []models.Occurrence
-	if err := q.Order("date DESC, collaborator_id, type").Find(&rows).Error; err != nil {
-		return nil, domain.NewInternal(op, "falha ao listar ocorrências", err)
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, 0, domain.NewInternal(op, "falha ao listar ocorrências", err)
 	}
 
 	out := make([]domain.Occurrence, 0, len(rows))
 	for _, m := range rows {
 		out = append(out, toDomainOccurrence(m))
 	}
-	return out, nil
+	return out, int(total), nil
 }
 
 func (r *occurrenceRepository) GetByID(id int) (*domain.Occurrence, error) {
@@ -293,6 +318,62 @@ func (r *occurrenceRepository) Ignore(id int, reason string, actorUserID *int) e
 		return domain.NewInternal(op, "falha ao ignorar ocorrência", err)
 	}
 	return nil
+}
+
+// ListEventsByTenant responde "o que foi tratado neste período, por quem" — a consulta
+// central do histórico (Feature 1). Faz JOIN com occurrences para trazer o nome do
+// colaborador e o tipo junto, numa única ida ao banco — sem isso o painel faria uma
+// chamada por evento para descobrir de quem e de que tipo é cada linha.
+func (r *occurrenceRepository) ListEventsByTenant(filter domain.OccurrenceEventFilter) ([]domain.OccurrenceEvent, error) {
+	const op = "occurrenceRepository.ListEventsByTenant"
+
+	type row struct {
+		models.OccurrenceEvent
+		CollaboratorName string
+		OccurrenceType   string
+	}
+
+	// "occurrence_events"/"occurrences" replicam o nome que o GORM pluraliza sozinho para
+	// models.OccurrenceEvent{}/models.Occurrence{} — nenhum dos dois tem TableName()
+	// customizado hoje. Se um dia ganhar (soft-delete, particionamento...), este JOIN
+	// precisa ser atualizado junto — não há checagem em tempo de compilação para isso.
+	q := r.db.Table("occurrence_events AS e").
+		Select("e.*, o.collaborator_name AS collaborator_name, o.type AS occurrence_type").
+		Joins("JOIN occurrences AS o ON o.id = e.occurrence_id").
+		Where("e.tenant_id = ?", filter.TenantID)
+
+	if filter.StartDate != nil {
+		q = q.Where("e.created_at >= ?", domain.DayOf(*filter.StartDate))
+	}
+	if filter.EndDate != nil {
+		// created_at é timestamp; end_date é um DIA — inclui o dia inteiro até a meia-noite
+		// seguinte, senão eventos do próprio end_date (depois das 00:00) ficariam de fora.
+		q = q.Where("e.created_at < ?", domain.DayOf(*filter.EndDate).AddDate(0, 0, 1))
+	}
+	if filter.ActorUserID != nil {
+		q = q.Where("e.actor_user_id = ?", *filter.ActorUserID)
+	}
+	if len(filter.Types) > 0 {
+		types := make([]string, 0, len(filter.Types))
+		for _, t := range filter.Types {
+			types = append(types, string(t))
+		}
+		q = q.Where("e.type IN ?", types)
+	}
+
+	var rows []row
+	if err := q.Order("e.created_at DESC").Find(&rows).Error; err != nil {
+		return nil, domain.NewInternal(op, "falha ao listar histórico de tratamento", err)
+	}
+
+	out := make([]domain.OccurrenceEvent, 0, len(rows))
+	for _, rw := range rows {
+		event := toDomainEvent(rw.OccurrenceEvent)
+		event.CollaboratorName = rw.CollaboratorName
+		event.OccurrenceType = rw.OccurrenceType
+		out = append(out, event)
+	}
+	return out, nil
 }
 
 func (r *occurrenceRepository) ListEvents(occurrenceID int) ([]domain.OccurrenceEvent, error) {

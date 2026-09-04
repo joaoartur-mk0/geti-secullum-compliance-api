@@ -161,6 +161,9 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 			// inconsistências por varredura": aqui cada ocorrência aparece UMA vez, com
 			// o estado atual, já enriquecida com horário fixo e filial.
 			tenantScoped.GET("/occurrences", occurrenceHandler.List)
+			// Histórico de tratamento (Feature 1): eventos de TODAS as ocorrências do
+			// tenant num período, com colaborador e tipo já embutidos.
+			tenantScoped.GET("/occurrence-events", occurrenceHandler.TenantEvents)
 
 			// Filiais do tenant
 			tenantScoped.GET("/branches", branchHandler.List)
