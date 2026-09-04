@@ -53,9 +53,12 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 	collaboratorHandler := handlers.NewCollaboratorHandler(collaboratorRepo, tenantRepo, branchResolver, secullumSvc, punchRecordRepo)
 	whatsappHandler := handlers.NewWhatsAppHandler(whatsappMgr, whatsappPrefix)
 	userHandler := handlers.NewUserHandler(userRepo, userTenantRepo)
-	occurrenceHandler := handlers.NewOccurrenceHandler(occurrenceRepo, collaboratorRepo, tenantRepo, userTenantRepo, branchResolver, secullumSvc)
+	monthlyReviewRepo := repositories.NewMonthlyReviewRepository(db)
+	monthlyReviewSvc := usecase.NewMonthlyReviewService(occurrenceRepo, reportRepo, monthlyReviewRepo, tenantRepo)
+	monthlyReviewHandler := handlers.NewMonthlyReviewHandler(monthlyReviewSvc, monthlyReviewRepo)
+	occurrenceHandler := handlers.NewOccurrenceHandler(occurrenceRepo, collaboratorRepo, tenantRepo, userTenantRepo, branchResolver, secullumSvc, monthlyReviewRepo)
 	treatmentRepo := repositories.NewTreatmentRepository(db)
-	treatmentSvc := usecase.NewTreatmentService(occurrenceRepo, treatmentRepo)
+	treatmentSvc := usecase.NewTreatmentService(occurrenceRepo, treatmentRepo, monthlyReviewRepo)
 	treatmentHandler := handlers.NewTreatmentHandler(treatmentSvc, treatmentRepo, occurrenceRepo, userTenantRepo)
 	branchHandler := handlers.NewBranchHandler(branchRepo, userTenantRepo)
 	warningHandler := handlers.NewWarningHandler(warningRepo, collaboratorRepo, userTenantRepo)
@@ -164,6 +167,13 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 			// Histórico de tratamento (Feature 1): eventos de TODAS as ocorrências do
 			// tenant num período, com colaborador e tipo já embutidos.
 			tenantScoped.GET("/occurrence-events", occurrenceHandler.TenantEvents)
+
+			// Revisão mensal (Feature 3) — ?competencia=YYYY-MM em todas as cinco.
+			tenantScoped.GET("/monthly-reviews", monthlyReviewHandler.Get)
+			tenantScoped.PATCH("/monthly-reviews", monthlyReviewHandler.UpdateManualConditions)
+			tenantScoped.POST("/monthly-reviews/close", monthlyReviewHandler.Close)
+			tenantScoped.POST("/monthly-reviews/reopen", monthlyReviewHandler.Reopen)
+			tenantScoped.GET("/monthly-reviews/export", monthlyReviewHandler.Export)
 
 			// Filiais do tenant
 			tenantScoped.GET("/branches", branchHandler.List)

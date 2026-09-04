@@ -14,12 +14,13 @@ import (
 )
 
 type OccurrenceHandler struct {
-	occurrenceRepo domain.OccurrenceRepository
-	collabRepo     domain.CollaboratorRepository
-	tenantRepo     domain.TenantRepository
-	userTenantRepo domain.UserTenantRepository
-	branchResolve  *usecase.BranchResolverService
-	secullumSvc    domain.SecullumService
+	occurrenceRepo    domain.OccurrenceRepository
+	collabRepo        domain.CollaboratorRepository
+	tenantRepo        domain.TenantRepository
+	userTenantRepo    domain.UserTenantRepository
+	branchResolve     *usecase.BranchResolverService
+	secullumSvc       domain.SecullumService
+	monthlyReviewRepo domain.MonthlyReviewRepository
 }
 
 func NewOccurrenceHandler(
@@ -29,14 +30,16 @@ func NewOccurrenceHandler(
 	userTenantRepo domain.UserTenantRepository,
 	branchResolve *usecase.BranchResolverService,
 	secullumSvc domain.SecullumService,
+	monthlyReviewRepo domain.MonthlyReviewRepository,
 ) *OccurrenceHandler {
 	return &OccurrenceHandler{
-		occurrenceRepo: occurrenceRepo,
-		collabRepo:     collabRepo,
-		tenantRepo:     tenantRepo,
-		userTenantRepo: userTenantRepo,
-		branchResolve:  branchResolve,
-		secullumSvc:    secullumSvc,
+		occurrenceRepo:    occurrenceRepo,
+		collabRepo:        collabRepo,
+		tenantRepo:        tenantRepo,
+		userTenantRepo:    userTenantRepo,
+		branchResolve:     branchResolve,
+		secullumSvc:       secullumSvc,
+		monthlyReviewRepo: monthlyReviewRepo,
 	}
 }
 
@@ -265,6 +268,11 @@ func (h *OccurrenceHandler) Ignore(c *gin.Context) {
 	}
 	// A rota usa o id da ocorrência, então o tenant só é conhecido depois de carregá-la.
 	if err := ensureTenantAccess(c, h.userTenantRepo, op, occurrence.TenantID); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	if err := domain.EnsureCompetenciaAberta(h.monthlyReviewRepo, op, occurrence.TenantID, occurrence.Date, "ignorar"); err != nil {
 		httperr.Respond(c, err)
 		return
 	}

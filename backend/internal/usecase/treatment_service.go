@@ -45,12 +45,21 @@ func sanitizeFileName(name string) string {
 // tratativa + anexo + transicionar a ocorrência) é responsabilidade do repositório —
 // ver domain.TreatmentRepository.Treat.
 type TreatmentService struct {
-	occurrenceRepo domain.OccurrenceRepository
-	treatmentRepo  domain.TreatmentRepository
+	occurrenceRepo    domain.OccurrenceRepository
+	treatmentRepo     domain.TreatmentRepository
+	monthlyReviewRepo domain.MonthlyReviewRepository
 }
 
-func NewTreatmentService(occurrenceRepo domain.OccurrenceRepository, treatmentRepo domain.TreatmentRepository) *TreatmentService {
-	return &TreatmentService{occurrenceRepo: occurrenceRepo, treatmentRepo: treatmentRepo}
+func NewTreatmentService(
+	occurrenceRepo domain.OccurrenceRepository,
+	treatmentRepo domain.TreatmentRepository,
+	monthlyReviewRepo domain.MonthlyReviewRepository,
+) *TreatmentService {
+	return &TreatmentService{
+		occurrenceRepo:    occurrenceRepo,
+		treatmentRepo:     treatmentRepo,
+		monthlyReviewRepo: monthlyReviewRepo,
+	}
 }
 
 // AttachmentInput é o anexo cru recebido do handler HTTP, antes de virar domain.Attachment.
@@ -74,6 +83,10 @@ func (s *TreatmentService) Treat(occurrenceID int, justification string, attachm
 
 	occ, err := s.occurrenceRepo.GetByID(occurrenceID)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := domain.EnsureCompetenciaAberta(s.monthlyReviewRepo, op, occ.TenantID, occ.Date, "tratar"); err != nil {
 		return nil, err
 	}
 
