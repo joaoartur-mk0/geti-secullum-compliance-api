@@ -54,6 +54,9 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 	whatsappHandler := handlers.NewWhatsAppHandler(whatsappMgr, whatsappPrefix)
 	userHandler := handlers.NewUserHandler(userRepo, userTenantRepo)
 	occurrenceHandler := handlers.NewOccurrenceHandler(occurrenceRepo, collaboratorRepo, tenantRepo, userTenantRepo, branchResolver, secullumSvc)
+	treatmentRepo := repositories.NewTreatmentRepository(db)
+	treatmentSvc := usecase.NewTreatmentService(occurrenceRepo, treatmentRepo)
+	treatmentHandler := handlers.NewTreatmentHandler(treatmentSvc, treatmentRepo, occurrenceRepo, userTenantRepo)
 	branchHandler := handlers.NewBranchHandler(branchRepo, userTenantRepo)
 	warningHandler := handlers.NewWarningHandler(warningRepo, collaboratorRepo, userTenantRepo)
 	equipmentHandler := handlers.NewEquipmentHandler(equipRepo)
@@ -109,6 +112,12 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 		// registro e o acesso é conferido dentro do handler.
 		v1.PATCH("/occurrences/:occurrenceId/ignore", occurrenceHandler.Ignore)
 		v1.GET("/occurrences/:occurrenceId/events", occurrenceHandler.Events)
+
+		// Tratativa (Feature 4) — mesma convenção acima.
+		v1.POST("/occurrences/:occurrenceId/treat", treatmentHandler.Treat)
+		v1.GET("/occurrences/:occurrenceId/treatments", treatmentHandler.Treatments)
+		v1.POST("/treatments/:treatmentId/undo", treatmentHandler.Undo)
+		v1.GET("/attachments/:attachmentId/download", treatmentHandler.DownloadAttachment)
 
 		// Filiais (aparelhos e nº de folha vinculados)
 		v1.GET("/branches/:branchId", branchHandler.Get)

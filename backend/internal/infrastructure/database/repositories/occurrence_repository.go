@@ -251,6 +251,14 @@ func (r *occurrenceRepository) Ignore(id int, reason string, actorUserID *int) e
 		if current.State == string(domain.OccurrenceResolvedManual) {
 			return nil
 		}
+		if current.State == string(domain.OccurrenceTreated) {
+			// Já tem tratativa registrada (Feature 4). Ignorar por cima sobrescreveria o
+			// desfecho sem passar pelo fluxo de Undo, deixando o registro de Treatment
+			// órfão e a trilha incoerente — o usuário precisa desfazer a tratativa
+			// primeiro (POST /treatments/:id/undo), não pode pular direto para ignorar.
+			return domain.NewConflict(op, "ocorrência já tem tratativa registrada", nil).
+				WithDetails("desfaça a tratativa antes de ignorar esta ocorrência")
+		}
 
 		now := time.Now()
 		updates := map[string]interface{}{
@@ -274,6 +282,10 @@ func (r *occurrenceRepository) Ignore(id int, reason string, actorUserID *int) e
 			CreatedAt:    now,
 		}).Error
 	})
+	var appErr *domain.AppError
+	if errors.As(err, &appErr) {
+		return err
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return domain.NewNotFound(op, "ocorrência não encontrada", err)
 	}

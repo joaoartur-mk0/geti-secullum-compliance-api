@@ -62,7 +62,17 @@ const (
 	OccurrenceResolvedAuto OccurrenceState = "resolvida_automatica"
 	// OccurrenceResolvedManual — um usuário decidiu ignorar. É PEGAJOSO: varreduras
 	// seguintes não reabrem a ocorrência, mesmo que ela continue sendo apurada.
+	// EXIBIDA NA TELA COMO "Ignorada" — nunca como "tratada"/"resolvida"/"concluída".
+	// Ignorar significa que o apontamento não procedia; tratar (abaixo) significa que
+	// havia um problema real e alguém agiu. Confundir os dois apaga a distinção que
+	// motivou a Feature 4 — ver docs/documento-funcional-compliance.md §1 e §3.1.
 	OccurrenceResolvedManual OccurrenceState = "resolvida_manual"
+	// OccurrenceTreated — um usuário registrou uma tratativa (Feature 4): houve ação real
+	// sobre o problema, com justificativa e, quando o tipo exige, anexo. Também PEGAJOSO.
+	// NUNCA fundida com OccurrenceResolvedAuto: a primeira é trabalho humano registrado
+	// aqui, a segunda é o dado corrigido na origem — são as duas metades da dor que
+	// originou o ciclo (quanto foi resolvido, e como).
+	OccurrenceTreated OccurrenceState = "tratada"
 )
 
 // Open indica se a ocorrência ainda demanda ação do gestor.
@@ -70,10 +80,17 @@ func (s OccurrenceState) Open() bool {
 	return s == OccurrenceOpen || s == OccurrenceUpdated
 }
 
+// Sticky indica se a ocorrência já tem desfecho humano e a reconciliação automática NÃO
+// deve reabri-la, mesmo que a inconsistência volte a ser apurada. Ignorada e tratada são
+// igualmente pegajosas — só resolvida_automatica pode ser revertida por uma nova varredura.
+func (s OccurrenceState) Sticky() bool {
+	return s == OccurrenceResolvedManual || s == OccurrenceTreated
+}
+
 // Valid indica se o valor é um dos estados conhecidos (validação de query string).
 func (s OccurrenceState) Valid() bool {
 	switch s {
-	case OccurrenceOpen, OccurrenceUpdated, OccurrenceResolvedAuto, OccurrenceResolvedManual:
+	case OccurrenceOpen, OccurrenceUpdated, OccurrenceResolvedAuto, OccurrenceResolvedManual, OccurrenceTreated:
 		return true
 	}
 	return false
@@ -137,11 +154,13 @@ func DayOf(t time.Time) time.Time {
 type OccurrenceEventType string
 
 const (
-	EventCreated        OccurrenceEventType = "criada"
-	EventUpdated        OccurrenceEventType = "atualizada"
-	EventResolvedAuto   OccurrenceEventType = "resolvida_automatica"
-	EventResolvedManual OccurrenceEventType = "resolvida_manual"
-	EventReopened       OccurrenceEventType = "reaberta"
+	EventCreated         OccurrenceEventType = "criada"
+	EventUpdated         OccurrenceEventType = "atualizada"
+	EventResolvedAuto    OccurrenceEventType = "resolvida_automatica"
+	EventResolvedManual  OccurrenceEventType = "resolvida_manual"
+	EventReopened        OccurrenceEventType = "reaberta"
+	EventTreated         OccurrenceEventType = "tratada"
+	EventTreatmentUndone OccurrenceEventType = "tratativa_desfeita"
 )
 
 // OccurrenceEvent é uma linha do log append-only de transições. É o "mantendo os logs" do
