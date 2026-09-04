@@ -168,6 +168,9 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 			tenantScoped.GET("/collaborators", collaboratorHandler.List)
 			// Histórico completo (ativos + demitidos)
 			tenantScoped.GET("/collaborators/history", collaboratorHandler.History)
+			// Departamentos, funções e empresas distintos entre os colaboradores do
+			// tenant — seletores de filtro (histórico, dashboards, ranking).
+			tenantScoped.GET("/collaborators/filters", collaboratorHandler.Filters)
 			// Autopreenchimento da tela de colaborador: horário fixo (Secullum) + filial.
 			tenantScoped.GET("/collaborators/:secullumId/prefill", collaboratorHandler.Prefill)
 			// Enriquecimento de equipamento/motivo por dia (cruzado com FonteDados na

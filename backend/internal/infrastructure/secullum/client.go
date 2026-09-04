@@ -162,6 +162,30 @@ type secullumFuncionarioResponse struct {
 	// significa funcionário ativo.
 	Admissao *string `json:"Admissao"`
 	Demissao *string `json:"Demissao"`
+
+	// Departamento, Funcao e Empresa vêm embutidos no funcionário — sempre estiveram no
+	// payload, só não eram lidos (ver docs/12_Revisao_Mensal_E_Tratativas_Backend_Contract.md
+	// §9). Todos os três podem vir null (colaborador sem departamento/função/empresa
+	// cadastrado, ou o Departamento "(Não informado)" que a Secullum usa como default).
+	Departamento *secullumCatalogoResponse `json:"Departamento"`
+	Funcao       *secullumCatalogoResponse `json:"Funcao"`
+	Empresa      *secullumEmpresaResponse  `json:"Empresa"`
+}
+
+// secullumCatalogoResponse é o formato comum de Departamento e Funcao no payload de
+// Funcionarios: um id e uma descrição, nada mais.
+type secullumCatalogoResponse struct {
+	Id        int    `json:"Id"`
+	Descricao string `json:"Descricao"`
+}
+
+// secullumEmpresaResponse traz só os campos que este sistema usa do objeto Empresa —
+// o payload real tem dezenas de outros (endereço, responsável, configurações), que não
+// interessam aqui.
+type secullumEmpresaResponse struct {
+	Id        int    `json:"Id"`
+	Nome      string `json:"Nome"`
+	Documento string `json:"Documento"` // CNPJ
 }
 
 // secullumHorarioResponse mapeia a jornada contratual (por dia da semana) de um
@@ -377,7 +401,7 @@ func (c *secullumClient) GetCollaborators(tenant *domain.Tenant) ([]domain.Colla
 	for _, raw := range rawResponses {
 		admissao := parseSecullumDateTime(raw.Admissao)
 		demissao := parseSecullumDateTime(raw.Demissao)
-		collaborators = append(collaborators, domain.Collaborator{
+		collab := domain.Collaborator{
 			TenantID:      tenant.ID,
 			SecullumID:    raw.Id,
 			Name:          raw.Nome,
@@ -388,7 +412,21 @@ func (c *secullumClient) GetCollaborators(tenant *domain.Tenant) ([]domain.Colla
 			Admissao:      admissao,
 			Demissao:      demissao,
 			Demitido:      demissao != nil,
-		})
+		}
+		if raw.Departamento != nil {
+			collab.DepartamentoID = &raw.Departamento.Id
+			collab.Departamento = raw.Departamento.Descricao
+		}
+		if raw.Funcao != nil {
+			collab.FuncaoID = &raw.Funcao.Id
+			collab.Funcao = raw.Funcao.Descricao
+		}
+		if raw.Empresa != nil {
+			collab.EmpresaID = &raw.Empresa.Id
+			collab.Empresa = raw.Empresa.Nome
+			collab.EmpresaDocumento = raw.Empresa.Documento
+		}
+		collaborators = append(collaborators, collab)
 	}
 
 	return collaborators, nil

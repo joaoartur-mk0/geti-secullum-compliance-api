@@ -51,6 +51,9 @@ func (f *fakeCollabRepo) GetHistoryByTenantID(int) ([]domain.Collaborator, error
 func (f *fakeCollabRepo) GetBySecullumID(int, int) (*domain.Collaborator, error) {
 	return nil, nil
 }
+func (f *fakeCollabRepo) ListFilterCatalog(int) (domain.CollaboratorFilterCatalog, error) {
+	return domain.CollaboratorFilterCatalog{}, nil
+}
 
 type fakeSecullumSvc struct {
 	collaborators []domain.Collaborator

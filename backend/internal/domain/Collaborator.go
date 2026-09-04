@@ -29,7 +29,39 @@ type Collaborator struct {
 	Demissao *time.Time
 	Demitido bool
 
+	// DepartamentoID/Departamento, FuncaoID/Funcao e EmpresaID/Empresa vêm crus do
+	// cadastro da Secullum (endpoint Funcionarios), sem normalização — se o cliente
+	// cadastrou "AÇOUGUE" e "AÇOUGUE MATRIZ" como departamentos distintos, os dois
+	// chegam aqui como registros distintos. Ver docs/documento-funcional-compliance.md
+	// §7.1. Ponteiro no ID porque o colaborador pode não ter nenhum dos três atribuído.
+	DepartamentoID *int
+	Departamento   string
+	FuncaoID       *int
+	Funcao         string
+	EmpresaID      *int
+	Empresa        string
+	// EmpresaDocumento é o CNPJ — vem no mesmo objeto Empresa do payload.
+	EmpresaDocumento string
+
 	Schedules []CollaboratorSchedule
+}
+
+// FilterOption é um item de catálogo (departamento, função ou empresa) para alimentar
+// seletores de filtro no painel — ver domain.CollaboratorRepository.ListFilterCatalog.
+type FilterOption struct {
+	ID        int
+	Descricao string
+}
+
+// CollaboratorFilterCatalog é a lista de departamentos, funções e empresas que existem
+// hoje entre os colaboradores sincronizados de um tenant. Deriva do próprio cadastro de
+// colaboradores (DISTINCT) em vez de sincronizar os endpoints de lista da Secullum à
+// parte — o dado já chega embutido em cada funcionário, e não há necessidade de listar
+// um departamento que nenhum colaborador usa.
+type CollaboratorFilterCatalog struct {
+	Departamentos []FilterOption
+	Funcoes       []FilterOption
+	Empresas      []FilterOption
 }
 
 // CollaboratorSchedule é a grade semanal cadastrada no horário do colaborador, mantida
@@ -65,4 +97,7 @@ type CollaboratorRepository interface {
 	// — usado por GET /collaborators/history.
 	GetHistoryByTenantID(tenantID int) ([]Collaborator, error)
 	GetBySecullumID(tenantID int, secullumID int) (*Collaborator, error)
+	// ListFilterCatalog devolve os departamentos, funções e empresas distintos entre os
+	// colaboradores do tenant — usado pelos seletores de filtro do painel.
+	ListFilterCatalog(tenantID int) (CollaboratorFilterCatalog, error)
 }
