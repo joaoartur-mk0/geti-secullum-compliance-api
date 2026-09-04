@@ -3,6 +3,13 @@
 **Origem:** documento funcional do ciclo de evolução (features 1 a 6), cruzado com o
 código atual em `41b05f7`.
 
+> ⚠ **Este documento é anterior ao fechamento de escopo.** A fonte de verdade do que entra
+> e do que fica fora é `docs/documento-funcional-compliance.md` (rascunho 2). Diferenças
+> principais: **isolamento por filial saiu do ciclo** (seções 3.1, 3.2 e 4 abaixo estão
+> fora), **filial não muda** (seção 2.2 fora), **revisão mensal encerra por tenant e não
+> por filial** (seção 6), **`ciente_sem_acao` foi descartado** (seção 5.1) e a **seção 9
+> estava factualmente errada** — já corrigida abaixo.
+
 **Para quem:** João (Go, banco, scheduler, integração Secullum).
 
 **O que este documento é:** a lista do que precisa existir no backend para as features do
@@ -55,7 +62,13 @@ descarta o que não bate com `branch_id` (`occurrence_handler.go:107`). Consequ�
 **Correção:** filial precisa ser coluna da ocorrência (2.2) e o filtro precisa ir para o
 `WHERE`.
 
-### 2.2 Filial não é persistida na ocorrência
+### 2.2 Filial não é persistida na ocorrência — FORA DESTE CICLO
+
+> Filial não muda neste ciclo (nem o cadastro, nem a resolução, nem a persistência). O
+> diagnóstico abaixo continua correto e vale para o próximo ciclo — junto com a descoberta
+> de que a Secullum **modela** unidade organizacional (`Estrutura`), ao contrário do que
+> afirmam os comentários de `domain/Branch.go` e `usecase/branch_resolver.go`. Ver
+> `docs/documento-funcional-compliance.md` §8.
 
 Hoje a filial é resolvida **em tempo de consulta** por `BranchResolverService`. Isso
 significa que a mesma ocorrência muda de filial se alguém editar o cadastro de nº de folha
@@ -120,9 +133,14 @@ com o nome do colaborador e o tipo da ocorrência já embutidos (senão o painel
 `docs/08_Roles_And_Permissions_Contract.md` está especificado até o SQL e **continua com
 zero linhas no código** (não há nenhuma ocorrência de `Role` em `backend/internal/`).
 
-Implementar como está escrito lá. Duas adições que o novo ciclo trouxe:
+Implementar como está escrito lá, com **uma alteração**: `GET /tenants/:id/users` sobe de
+**RH** para **Super Admin** (a matriz da seção 5.2 do doc 08 precisa ser corrigida).
 
-### 3.1 Perfil consolidador
+> ⚠ **As seções 3.1 e 3.2 abaixo estão FORA deste ciclo.** Perfil consolidador e vínculo
+> usuário ↔ filial só fazem sentido com isolamento por filial, que foi descartado
+> (seção 4). Ficam registradas para o ciclo em que isolamento voltar.
+
+### 3.1 Perfil consolidador — FORA DESTE CICLO
 
 O documento funcional pede um perfil com **visão agregada de todas as filiais e capacidade
 de comparar filiais entre si**. Os quatro papéis do doc 08 são aninhados e nenhum deles
@@ -151,7 +169,17 @@ nada no dia do deploy.
 
 ---
 
-## 4. Prioridade 1 — isolamento de filial de verdade
+## 4. Isolamento de filial — FORA DESTE CICLO
+
+> **Decisão:** não entra. Toda a staff vê todas as filiais. Filial continua sendo recorte
+> de leitura, e **nenhuma tela pode sugerir que é fronteira de segurança**.
+>
+> Motivo: o ciclo já carrega tratativa, anexos, histórico, revisão mensal com encerramento,
+> papéis e sincronização de departamento/função/empresa. Isolamento é o único item com
+> critério de aceite de segurança — entregue pela metade é pior que não entregue, porque
+> cria a crença de que existe.
+>
+> O restante desta seção fica registrado para o ciclo em que isolamento voltar.
 
 Critério de aceite do documento funcional, literal: *"um gestor da filial A não consegue,
 por nenhum caminho (filtro, URL, exportação, ranking), ver dado da filial B."*
@@ -182,15 +210,18 @@ reinterpretá-las como "tratadas" corrompe o histórico que já existe. Adicione
 
 ```go
 const (
-    OccurrenceTreated OccurrenceState = "tratada"        // houve ação sobre o problema
-    OccurrenceAware   OccurrenceState = "ciente_sem_acao" // risco reconhecido e aceito
+    OccurrenceTreated OccurrenceState = "tratada" // houve ação sobre o problema
 )
 ```
 
-`ciente_sem_acao` está marcado como "a confirmar" no documento funcional. Recomendo criar
-junto: o campo é barato agora e impossível de recuperar depois — sem ele, o usuário marca
-hora extra pequena como "tratada" e o histórico perde a diferença entre trabalho feito e
-risco aceito.
+> **Decidido:** `ciente_sem_acao` foi **descartado**. Fica só `tratada`, totalizando cinco
+> estados de sistema: `aberta`, `atualizada`, `resolvida_automatica`, `resolvida_manual`
+> (exibida como "Ignorada") e `tratada`.
+>
+> Ponto de atenção que continua valendo: **`resolvida_automatica` nunca pode ser fundida
+> com `tratada`**. Ela é a metade "resolvidas" da dor que originou o ciclo — se as duas
+> virarem a mesma coisa, o histórico deixa de distinguir trabalho humano de correção na
+> origem, e a feature perde o propósito.
 
 Como `resolvida_manual` e `tratada` são ambos manuais, `OccurrenceState.Open()` precisa
 continuar devolvendo `false` para todos eles, e o `ChangeResolve` da reconciliação precisa
@@ -264,37 +295,50 @@ type TypePolicy struct {
 ### 5.5 Anexos
 
 Não existe **nada** de upload no repositório (nenhum `multipart`, storage ou bucket).
-Decisão de infraestrutura necessária antes de estimar: disco no VPS, S3/MinIO, ou base de
-dados. Restrições mínimas: tipo permitido, tamanho máximo, e o arquivo **não** pode ser
-servido por URL adivinhável — anexo de tratativa é atestado médico, e isso é dado de saúde.
+
+**Decidido:**
+
+1. Formato aceito: **PDF**, apenas.
+2. Armazenamento: **banco local** (não S3/MinIO, não disco no VPS).
+3. Teto de tamanho por arquivo — valor a definir na implementação.
+4. Download **só** por rota autenticada que confere o tenant. Nunca caminho estático, nunca
+   URL adivinhável.
+5. Registrar quem baixou.
+
+O item 4 não é negociável: anexo de tratativa é atestado médico e acordo de compensação —
+dado sensível de saúde (LGPD art. 11).
 
 ---
 
 ## 6. Prioridade 3 — revisão mensal (feature 3)
 
+> **Alterado:** o recorte é por **tenant e competência**, não por filial. Como o isolamento
+> por filial saiu do escopo (seção 4), encerrar por filial encerraria um recorte que o
+> sistema não isola nem garante. Revisitar quando filial voltar a ter fronteira real.
+
 ```sql
 CREATE TABLE monthly_reviews (
   id           SERIAL PRIMARY KEY,
   tenant_id    INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  branch_id    INTEGER NULL REFERENCES branches(id),
   competencia  CHAR(7) NOT NULL,               -- "YYYY-MM"
   status       VARCHAR(20) NOT NULL,           -- aberta | encerrada
   payroll_done BOOLEAN NOT NULL DEFAULT FALSE, -- confirmação manual
   offsets_done BOOLEAN NOT NULL DEFAULT FALSE, -- confirmação manual
   closed_at    TIMESTAMP NULL,
   closed_by_user_id INTEGER NULL REFERENCES users(id),
-  UNIQUE (tenant_id, branch_id, competencia)
+  UNIQUE (tenant_id, competencia)
 );
 ```
 
 Regras:
 
-1. Encerramento é **por filial e por competência**, nunca global. `branch_id NULL` é a
-   linha das ocorrências sem filial e também precisa poder ser encerrada.
+1. Encerramento é **por tenant e por competência**.
 2. Competência encerrada **congela**: nenhuma tratativa nova é aceita naquele intervalo.
 3. Reabertura é possível, restrita, **com motivo registrado** — grava evento, não
-   sobrescreve.
-4. Data de corte configurável por tenant (antecipar/postergar o corte operacional).
+   sobrescreve. *(Em aberto: qual papel mínimo pode reabrir.)*
+4. Data de corte configurável **no nosso sistema**, por tenant. Não herdada da Secullum:
+   embora `Empresa` traga `FechamentoPonto`/`DiaFechamentoPonto`, o controle de
+   inconsistência é feito aqui e a data que rege o ciclo é a nossa.
 5. O encerramento gera relatório consolidado exportável — é a evidência do ciclo.
 
 **Condições automáticas do painel** (o frontend já calcula as quatro hoje, e vai passar a
@@ -335,37 +379,76 @@ o tenant só podendo ser **mais** rigoroso.
 
 ---
 
-## 9. Pendências de payload da Secullum — bloqueiam features inteiras
+## 9. Campos da Secullum — CORRIGIDO: nunca estiveram bloqueados
 
-O documento funcional pede filtros e agregações por **setor** e **função** em quatro
-features diferentes, e normalização de ranking por **dias trabalhados**. Nada disso existe
-no cliente Secullum atual (`secullum/client.go`), no espelho local (`domain.Collaborator`)
-ou na documentação de API que temos (`docs/01_Secullum_API_Info.md`).
+> A versão anterior desta seção afirmava que setor, função e dias trabalhados não existiam
+> no payload da Secullum e tratava isso como bloqueio externo. **Estava errado.** O payload
+> capturado em `docs/intern/Secullum_API_Responses/response_funcionarios_all_colaborator.json`
+> — versionado neste repositório desde antes deste ciclo — contém todos eles.
 
-**Ação pedida:** confirmar, no payload real da Secullum, se existem:
+O que o payload de funcionários realmente traz, e que `secullumFuncionarioResponse` em
+`secullum/client.go` **não lê** hoje:
 
-| Campo | Usado por | Se não existir |
+| Campo no payload | Conteúdo | Situação |
 |---|---|---|
-| Setor / departamento do funcionário | Features 1, 2, 6 (filtros e quebras) | Vira cadastro local no painel, ou some do escopo |
-| Função / cargo | Idem | Idem |
-| Dias trabalhados no período | Feature 6 (normalização do ranking) | Ranking fica bruto, e precisa dizer isso na tela |
+| `Departamento` / `DepartamentoId` | Objeto `{Id, Descricao, Nfolha}` | Não mapeado |
+| `Funcao` / `FuncaoId` | Objeto `{Id, Descricao}` | Não mapeado |
+| `Empresa` / `EmpresaId` | Objeto completo, com `Documento` (CNPJ) | Não mapeado |
+| `Estrutura` / `EstruturaId` / `EstruturaPaiId` | Árvore genérica — ver seção 9.1 | Não mapeado |
 
-Enquanto não houver resposta, tudo que depende desses campos está **fora de escopo** e
-declarado como tal na seção 11 do contrato de frontend. O documento funcional também cita
-"ACOUGUE" vs "AÇOUGUE" como problema de qualidade de dado — vale notar que esse ruído vem
-de um relatório que **este sistema ainda não lê**; ele só passa a existir quando setor
-entrar.
+Existem também endpoints de lista para alimentar seletores de filtro:
+`/IntegracaoExterna/Departamentos`, `/IntegracaoExterna/Funcoes`,
+`/IntegracaoExterna/Empresas` e `/IntegracaoExterna/Estruturas`.
+
+**Dias trabalhados** não é campo direto, mas é **derivável**: `GetDailyPunchesRange` já
+traz um registro por colaborador por dia (`domain.DailyPunch`, com `Marcacoes` e `Folga`).
+Contar os dias com marcação resolve. Ainda assim, a normalização do ranking ficou para o
+próximo ciclo — não por falta de dado, mas porque muda a fórmula de pontuação.
+
+Portanto: setor, função e empresa são **trabalho de mapeamento**, não negociação com
+terceiro, e entram neste ciclo. Detalhe funcional em `docs/documento-funcional-compliance.md`
+§7.1.
+
+### 9.1 `Estrutura` não é "filial" — cuidado
+
+`Estrutura` é uma **árvore configurável pelo cliente** (`EstruturaPaiId`), sem semântica
+garantida pela API. Numa base ela contém as unidades físicas (`MATRIZ`, `SÃO CRISTOVÃO`,
+`SÃO JACINTO`, `VILA BARREIROS`); noutra, um organograma (`Diretoria` → `Supervisor de
+sistema fiscal`, …). `EstruturaId` também é **anulável** — 4 de 9 colaboradores do payload
+capturado estão sem estrutura.
+
+Consequência: **não** tratar `Filial := Estrutura` como equivalência. Isso está fora deste
+ciclo e o encaminhamento está em `docs/documento-funcional-compliance.md` §8.
+
+### 9.2 Qualidade do cadastro — o ruído real
+
+O documento funcional citava "ACOUGUE" vs "AÇOUGUE" como problema de acento. No cadastro
+real os acentos estão corretos. Os problemas de verdade são outros três:
+
+1. **Sufixo de unidade no nome do setor:** `AÇOUGUE`, `AÇOUGUE MATRIZ`, `AÇOUGUE SC`,
+   `AÇOUGUE SJ` são quatro registros distintos.
+2. **Grafia divergente:** `PREVENÇÃO E PERDA` vs `PREVENÇÃO DE PERDA MATRIZ`.
+3. **Linhas-lixo:** `(Não informado)`, `10/06/2014` (uma data cadastrada como
+   departamento), `Departamento` (placeholder literal).
+
+**Decisão:** sincronizar cru, sem normalizar. O painel reflete a fonte; não a corrige. Um
+de-para local vira feature própria se e quando o cliente reclamar.
 
 ---
 
-## 10. Ordem sugerida
+## 10. Ordem sugerida — ATUALIZADA
 
-1. **2.2 + 2.4** — filial persistida e filtros server-side. Barato, destrava o resto e já
-   melhora o que está no ar.
-2. **3 + 4** — papéis e isolamento. É a fundação da feature 5 e o único item com critério
-   de aceite de segurança.
-3. **5** — tratativa. É a fundação de tudo que o documento chama de features 1, 3 e 6.
-4. **2.5 + 6** — eventos agregados e revisão mensal.
-5. **7 + 8** — agregações no servidor e limiares.
+Com filial e isolamento fora, a ordem passa a ser:
 
-A seção 9 corre em paralelo e não depende de código: é uma consulta ao payload.
+1. **9** — mapear departamento, função e empresa no cliente Secullum e no espelho local.
+   Barato, sem dependência, destrava filtro em três telas de uma vez.
+2. **5** — tratativa (individual) e anexos. A fundação: tudo abaixo consome o que ela
+   produz. **Lote fica para uma segunda etapa.**
+3. **2.4 + 2.5** — filtros server-side (severidade, tipo, paginação) e consulta agregada de
+   eventos. É o que sustenta o histórico com volume real.
+4. **6** — revisão mensal com encerramento por tenant.
+5. **7** — agregações no servidor, se e quando o volume exigir.
+
+**3 (papéis) corre em paralelo** — sem 3.1 e 3.2, que saíram junto com o isolamento.
+
+**Fora:** 2.2 e 2.3 (filial), 4 (isolamento), 8 (limiares parametrizáveis).

@@ -1,10 +1,25 @@
 # Histórico, Ranking e Revisão Mensal — contrato de frontend
 
-**Origem:** `docs/intern/documento-funcional-compliance.md` (base funcional, rascunho 1).
+**Origem:** documento funcional, **rascunho 1**. A versão vigente é
+`docs/documento-funcional-compliance.md` (rascunho 2).
 
-**Escopo deste documento:** a fatia das features 1, 2, 3 e 6 que é implementável **hoje**,
-sem uma linha de Go e sem migration. É contrato, não sugestão: os números destas telas são
-calculados no cliente e precisam significar sempre a mesma coisa, em qualquer tela.
+**Escopo deste documento:** a fatia das features 1, 2, 3 e 6 que era implementável **sem
+backend** — e que já foi entregue (`d462944`). É contrato, não sugestão: os números destas
+telas são calculados no cliente e precisam significar sempre a mesma coisa, em qualquer
+tela.
+
+> ⚠ **O que mudou depois desta escrita.** Este documento descreve o estado entregue, mas
+> quatro afirmações dele deixam de valer quando o backend do ciclo entrar:
+>
+> | Seção | Dizia | Passa a ser |
+> |---|---|---|
+> | §6 | "`tratada` não existe" | Passa a existir. Cinco estados de sistema, quatro grupos de exibição. |
+> | §9.2 r.5 | "dias trabalhados: o dado não existe" | O dado é derivável. Normalização adiada por decisão, não por falta. |
+> | §9.3 r.3/r.4 | "não existe botão de encerrar" | Passa a existir, por tenant + competência. |
+> | §11 | setor/função "não estão no payload" | **Errado.** Sempre estiveram. Entram neste ciclo. |
+>
+> Enquanto o backend não entrega, o que está escrito aqui continua sendo o comportamento
+> correto das telas no ar.
 
 O que depende de backend está em `docs/12_Revisao_Mensal_E_Tratativas_Backend_Contract.md`.
 
@@ -279,10 +294,12 @@ Valem para as cinco entregas. Quebrar qualquer uma invalida a entrega.
 
 | Pendência | Motivo |
 |---|---|
-| **Setor e função** | Não estão no payload documentado da Secullum. Pendente de confirmação (contrato de backend, seção 9). Nenhum filtro por setor/função nesta rodada. |
-| **Dias trabalhados** | Idem — sem ele, não há normalização de ranking. |
-| **Desfecho "tratada"**, justificativa, anexo, lote | Feature 4, backend. |
-| **Encerrar / reabrir competência** | Backend. |
-| **Isolamento por filial** | Backend + papéis. |
-| **Semáforo executivo** | Depende de metas cadastradas. |
-| **Carga retroativa** | Backend. |
+| **Setor (departamento) e função** | ~~Não estão no payload da Secullum.~~ **Correção: sempre estiveram** (`Departamento`, `Funcao`, e endpoints de lista). Não eram lidos pelo cliente. Entram no ciclo do backend — ver `docs/12` §9. |
+| **Empresa (CNPJ)** | Idem. Entra como campo e filtro, sem visão agregada própria. |
+| **Dias trabalhados** | Derivável de `DailyPunch`. Normalização do ranking adiada **por decisão**, não por falta de dado. |
+| **Desfecho "tratada"**, justificativa, anexo | Feature 4, backend. Entra no ciclo. |
+| **Tratativa em lote** | Segunda etapa, depois do individual. |
+| **Encerrar / reabrir competência** | Backend. Entra no ciclo, por **tenant + competência**. |
+| **Isolamento por filial** | **Descartado deste ciclo.** Toda a staff vê todas as filiais. Nenhuma tela pode sugerir que filial é fronteira de segurança. |
+| **Semáforo executivo** | Depende de metas cadastradas. Continua fora. |
+| **Carga retroativa** | Continua fora. O histórico começa vazio. |
