@@ -101,7 +101,7 @@ func (h *TreatmentHandler) Treat(c *gin.Context) {
 		httperr.Respond(c, err)
 		return
 	}
-	if err := ensureTenantAccess(c, h.userTenantRepo, op, occurrence.TenantID); err != nil {
+	if err := requireRole(c, h.userTenantRepo, op, occurrence.TenantID, domain.RoleGestor); err != nil {
 		httperr.Respond(c, err)
 		return
 	}
@@ -170,7 +170,7 @@ func (h *TreatmentHandler) Undo(c *gin.Context) {
 		httperr.Respond(c, err)
 		return
 	}
-	if err := ensureTenantAccess(c, h.userTenantRepo, op, treatment.TenantID); err != nil {
+	if err := requireRole(c, h.userTenantRepo, op, treatment.TenantID, domain.RoleGestor); err != nil {
 		httperr.Respond(c, err)
 		return
 	}

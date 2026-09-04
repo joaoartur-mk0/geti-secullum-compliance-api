@@ -267,7 +267,8 @@ func (h *OccurrenceHandler) Ignore(c *gin.Context) {
 		return
 	}
 	// A rota usa o id da ocorrência, então o tenant só é conhecido depois de carregá-la.
-	if err := ensureTenantAccess(c, h.userTenantRepo, op, occurrence.TenantID); err != nil {
+	// Papel mínimo Gestor (docs/08 §5.3).
+	if err := requireRole(c, h.userTenantRepo, op, occurrence.TenantID, domain.RoleGestor); err != nil {
 		httperr.Respond(c, err)
 		return
 	}

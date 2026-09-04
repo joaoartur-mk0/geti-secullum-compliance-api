@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -94,6 +95,57 @@ func RequireTenantAccess(repo domain.UserTenantRepository, param string) gin.Han
 			forbidden(c, "você não tem acesso a este tenant")
 			return
 		}
+		c.Next()
+	}
+}
+
+// RequireTenantRole exige vínculo com o tenant da rota E papel mínimo — irmão de
+// RequireTenantAccess (que continua sendo o piso "Diretoria" nas rotas de leitura, e
+// segue existindo à parte porque acesso e papel mínimo são checagens distintas: primeiro
+// SE tem acesso, só depois QUANTO). Super admin passa direto, como em toda checagem desta
+// camada. Ver docs/08_Roles_And_Permissions_Contract.md §6.1.
+func RequireTenantRole(repo domain.UserTenantRepository, param string, min domain.Role) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if isSuperAdmin(c) {
+			c.Next()
+			return
+		}
+
+		tenantID, err := strconv.Atoi(c.Param(param))
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{"code": string(domain.KindValidation), "message": "parâmetro de rota inválido"},
+			})
+			return
+		}
+
+		role, err := repo.GetRole(currentUserID(c), tenantID)
+		if err != nil {
+			// "Sem vínculo" (NotFound) vira 403; qualquer outro erro é falha real de
+			// infraestrutura e deve aparecer como 500 — mesma distinção que HasAccess
+			// já faz acima, para GetRole.
+			var appErr *domain.AppError
+			if errors.As(err, &appErr) && appErr.Kind == domain.KindNotFound {
+				forbidden(c, "você não tem acesso a este tenant")
+				return
+			}
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+				"error": gin.H{"code": string(domain.KindInternal), "message": "falha ao verificar perfil de acesso"},
+			})
+			return
+		}
+		if !role.Valid() {
+			// Linha corrompida ou de uma versão futura do enum: nega tudo, nunca libera
+			// por omissão.
+			forbidden(c, "seu perfil de acesso não permite esta ação")
+			return
+		}
+		if !role.AtLeast(min) {
+			forbidden(c, "seu perfil de acesso não permite esta ação")
+			return
+		}
+
+		c.Set(ContextRoleKey, role)
 		c.Next()
 	}
 }

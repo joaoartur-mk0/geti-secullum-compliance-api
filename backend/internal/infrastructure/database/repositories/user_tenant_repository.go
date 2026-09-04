@@ -19,16 +19,45 @@ func NewUserTenantRepository(db *gorm.DB) domain.UserTenantRepository {
 	return &userTenantRepository{db: db}
 }
 
-func (r *userTenantRepository) AddUserToTenant(userID uint, tenantID int) error {
+func (r *userTenantRepository) AddUserToTenant(userID uint, tenantID int, role domain.Role) error {
 	const op = "userTenantRepository.AddUserToTenant"
 
-	link := models.UserTenant{UserID: userID, TenantID: tenantID}
+	link := models.UserTenant{UserID: userID, TenantID: tenantID, Role: string(role)}
 	err := r.db.Create(&link).Error
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return domain.NewConflict(op, "usuário já tem acesso a este tenant", err)
 	}
 	if err != nil {
 		return domain.NewInternal(op, "falha ao vincular usuário ao tenant", err)
+	}
+	return nil
+}
+
+func (r *userTenantRepository) GetRole(userID uint, tenantID int) (domain.Role, error) {
+	const op = "userTenantRepository.GetRole"
+
+	var link models.UserTenant
+	err := r.db.Where("user_id = ? AND tenant_id = ?", userID, tenantID).First(&link).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", domain.NewNotFound(op, "vínculo não encontrado", err)
+	}
+	if err != nil {
+		return "", domain.NewInternal(op, "falha ao buscar papel do usuário", err)
+	}
+	return domain.Role(link.Role), nil
+}
+
+func (r *userTenantRepository) UpdateRole(userID uint, tenantID int, role domain.Role) error {
+	const op = "userTenantRepository.UpdateRole"
+
+	res := r.db.Model(&models.UserTenant{}).
+		Where("user_id = ? AND tenant_id = ?", userID, tenantID).
+		Update("role", string(role))
+	if res.Error != nil {
+		return domain.NewInternal(op, "falha ao atualizar papel do usuário", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return domain.NewNotFound(op, "vínculo não encontrado", nil)
 	}
 	return nil
 }
@@ -75,18 +104,27 @@ func (r *userTenantRepository) ListTenantsForUser(userID uint) ([]*domain.Tenant
 	return mapTenants(tenantModels), nil
 }
 
-func (r *userTenantRepository) ListUsersForTenant(tenantID int) ([]domain.User, error) {
+func (r *userTenantRepository) ListUsersForTenant(tenantID int) ([]domain.UserWithRole, error) {
 	const op = "userTenantRepository.ListUsersForTenant"
 
-	var userModels []models.User
-	err := r.db.
+	type row struct {
+		models.User
+		Role string
+	}
+	var rows []row
+	err := r.db.Table("users").
+		Select("users.*, user_tenants.role AS role").
 		Joins("JOIN user_tenants ON user_tenants.user_id = users.id").
 		Where("user_tenants.tenant_id = ?", tenantID).
 		Order("users.id").
-		Find(&userModels).Error
+		Find(&rows).Error
 	if err != nil {
 		return nil, domain.NewInternal(op, "falha ao listar usuários do tenant", err)
 	}
 
-	return mapUsers(userModels), nil
+	out := make([]domain.UserWithRole, 0, len(rows))
+	for _, rw := range rows {
+		out = append(out, domain.UserWithRole{User: *toDomainUser(&rw.User), Role: domain.Role(rw.Role)})
+	}
+	return out, nil
 }

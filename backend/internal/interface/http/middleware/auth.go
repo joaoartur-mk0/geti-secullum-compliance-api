@@ -14,6 +14,10 @@ const (
 	ContextUserIDKey       = "auth_user_id"
 	ContextUserEmailKey    = "auth_user_email"
 	ContextIsSuperAdminKey = "auth_is_super_admin"
+	// ContextRoleKey guarda o papel efetivo (domain.Role) do usuário no tenant da rota
+	// atual — só definido por RequireTenantRole, depois de confirmar acesso E papel
+	// mínimo. Ausente em rotas que não passam por esse middleware.
+	ContextRoleKey = "auth_role"
 )
 
 // RequireAuth exige um token JWT válido no header "Authorization: Bearer <token>".

@@ -82,6 +82,18 @@ func (h *AuditHandler) TriggerAudit(c *gin.Context) {
 		return
 	}
 
+	// 1b2. A forma do corpo decide o papel mínimo (docs/08 §5.4): "auditar agora" — sem
+	// date nem range, o fechamento de D-1 de sempre — é a única forma que a Diretoria
+	// pode disparar (ensureTenantAccess acima já garante esse piso). Pedir um dia
+	// específico ou um período grava até maxRangeDays relatórios e reconcilia dias de
+	// uma vez — está longe de "mostrar o sistema sem risco", então exige Gestor+.
+	if req.Date != "" || req.isRange() {
+		if err := requireRole(c, h.userTenantRepo, op, req.TenantID, domain.RoleGestor); err != nil {
+			httperr.Respond(c, err)
+			return
+		}
+	}
+
 	// 1c. Requisição de período (start_date/end_date) vs. dia único (date, ou nenhum dos
 	// dois = fechamento de D-1) seguem caminhos de validação diferentes.
 	if req.isRange() {

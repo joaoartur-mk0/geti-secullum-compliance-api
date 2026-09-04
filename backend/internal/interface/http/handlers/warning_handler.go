@@ -88,9 +88,11 @@ func toWarningResponse(w domain.Warning) warningResponse {
 	return out
 }
 
-// loadWarning carrega a advertência e confere o acesso ao tenant dono dela (a rota usa o
-// id próprio, então o tenant só é conhecido depois de ler o registro).
-func (h *WarningHandler) loadWarning(c *gin.Context, op string) (*domain.Warning, error) {
+// loadWarning carrega a advertência e confere o papel mínimo no tenant dono dela (a rota
+// usa o id próprio, então o tenant só é conhecido depois de ler o registro). Get passa
+// domain.RoleDiretoria (piso de leitura); as escritas (Update, UpdateStatus, Delete)
+// passam domain.RoleGestor (docs/08 §5.3).
+func (h *WarningHandler) loadWarning(c *gin.Context, op string, min domain.Role) (*domain.Warning, error) {
 	id, err := idParam(c, op, "warningId")
 	if err != nil {
 		return nil, err
@@ -99,7 +101,7 @@ func (h *WarningHandler) loadWarning(c *gin.Context, op string) (*domain.Warning
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureTenantAccess(c, h.userTenantRepo, op, warning.TenantID); err != nil {
+	if err := requireRole(c, h.userTenantRepo, op, warning.TenantID, min); err != nil {
 		return nil, err
 	}
 	return warning, nil
@@ -222,7 +224,7 @@ func (h *WarningHandler) List(c *gin.Context) {
 func (h *WarningHandler) Get(c *gin.Context) {
 	const op = "WarningHandler.Get"
 
-	warning, err := h.loadWarning(c, op)
+	warning, err := h.loadWarning(c, op, domain.RoleDiretoria)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -237,7 +239,7 @@ func (h *WarningHandler) Get(c *gin.Context) {
 func (h *WarningHandler) Update(c *gin.Context) {
 	const op = "WarningHandler.Update"
 
-	warning, err := h.loadWarning(c, op)
+	warning, err := h.loadWarning(c, op, domain.RoleGestor)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -267,7 +269,7 @@ func (h *WarningHandler) Update(c *gin.Context) {
 func (h *WarningHandler) UpdateStatus(c *gin.Context) {
 	const op = "WarningHandler.UpdateStatus"
 
-	warning, err := h.loadWarning(c, op)
+	warning, err := h.loadWarning(c, op, domain.RoleGestor)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -301,7 +303,7 @@ func (h *WarningHandler) UpdateStatus(c *gin.Context) {
 func (h *WarningHandler) Delete(c *gin.Context) {
 	const op = "WarningHandler.Delete"
 
-	warning, err := h.loadWarning(c, op)
+	warning, err := h.loadWarning(c, op, domain.RoleGestor)
 	if err != nil {
 		httperr.Respond(c, err)
 		return

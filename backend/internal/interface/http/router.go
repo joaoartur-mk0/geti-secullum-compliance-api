@@ -102,27 +102,32 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 		v1.PATCH("/tenants/:id/deactivate", middleware.RequireSuperAdmin(), tenantHandler.Deactivate)
 		v1.DELETE("/tenants/:id", middleware.RequireSuperAdmin(), tenantHandler.Delete)
 
-		// Gestão do vínculo usuário↔tenant (só super admin associa/desassocia).
+		// Gestão do vínculo usuário↔tenant (só super admin associa/desassocia/troca papel).
 		v1.POST("/tenants/:id/users", middleware.RequireSuperAdmin(), tenantHandler.AddUser)
 		v1.DELETE("/tenants/:id/users/:userId", middleware.RequireSuperAdmin(), tenantHandler.RemoveUser)
+		v1.PATCH("/tenants/:id/users/:userId/role", middleware.RequireSuperAdmin(), tenantHandler.UpdateUserRole)
+
+		// Promover/rebaixar super admin (só super admin) — docs/08 §7.3.
+		v1.PATCH("/users/:id/super-admin", middleware.RequireSuperAdmin(), userHandler.UpdateSuperAdmin)
 
 		// Responsáveis (staff) — id próprio na rota, tenant só é conhecido após
-		// carregar o registro; checagem de acesso feita dentro do handler.
+		// carregar o registro; papel mínimo RH conferido dentro do handler
+		// (docs/08_Roles_And_Permissions_Contract.md §5.3).
 		v1.PUT("/staffs/:staffId", staffHandler.Update)
 		v1.DELETE("/staffs/:staffId", staffHandler.Delete)
 
 		// Ocorrências — mesma convenção: o id da ocorrência é a chave, o tenant sai do
-		// registro e o acesso é conferido dentro do handler.
+		// registro e o papel mínimo (Gestor) é conferido dentro do handler.
 		v1.PATCH("/occurrences/:occurrenceId/ignore", occurrenceHandler.Ignore)
 		v1.GET("/occurrences/:occurrenceId/events", occurrenceHandler.Events)
 
-		// Tratativa (Feature 4) — mesma convenção acima.
+		// Tratativa (Feature 4) — mesma convenção acima, papel mínimo Gestor.
 		v1.POST("/occurrences/:occurrenceId/treat", treatmentHandler.Treat)
 		v1.GET("/occurrences/:occurrenceId/treatments", treatmentHandler.Treatments)
 		v1.POST("/treatments/:treatmentId/undo", treatmentHandler.Undo)
 		v1.GET("/attachments/:attachmentId/download", treatmentHandler.DownloadAttachment)
 
-		// Filiais (aparelhos e nº de folha vinculados)
+		// Filiais (aparelhos e nº de folha vinculados) — papel mínimo RH nas escritas.
 		v1.GET("/branches/:branchId", branchHandler.Get)
 		v1.PUT("/branches/:branchId", branchHandler.Update)
 		v1.DELETE("/branches/:branchId", branchHandler.Delete)
@@ -131,7 +136,7 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 		v1.POST("/branches/:branchId/payroll-numbers", branchHandler.AddPayrollNumber)
 		v1.DELETE("/branches/:branchId/payroll-numbers/:payrollNumberId", branchHandler.RemovePayrollNumber)
 
-		// Advertências
+		// Advertências — papel mínimo Gestor nas escritas.
 		v1.GET("/warnings/:warningId", warningHandler.Get)
 		v1.PUT("/warnings/:warningId", warningHandler.Update)
 		v1.PATCH("/warnings/:warningId/status", warningHandler.UpdateStatus)
@@ -144,15 +149,17 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 		tenantScoped.Use(middleware.RequireTenantAccess(userTenantRepo, "id"))
 		{
 			tenantScoped.GET("", tenantHandler.Get)
-			tenantScoped.POST("/sync", tenantHandler.Sync)
+			// Sincronizar é operação, não configuração — encaixa em Gestor
+			// (docs/08 §11.3).
+			tenantScoped.POST("/sync", middleware.RequireTenantRole(userTenantRepo, "id", domain.RoleGestor), tenantHandler.Sync)
 
-			// Configurações do tenant
+			// Configurações do tenant — papel mínimo RH.
 			tenantScoped.GET("/settings", settingsHandler.Get)
-			tenantScoped.PUT("/settings", settingsHandler.Update)
+			tenantScoped.PUT("/settings", middleware.RequireTenantRole(userTenantRepo, "id", domain.RoleRH), settingsHandler.Update)
 
-			// Responsáveis (staff) do tenant
+			// Responsáveis (staff) do tenant — cadastro é RH.
 			tenantScoped.GET("/staffs", staffHandler.List)
-			tenantScoped.POST("/staffs", staffHandler.Create)
+			tenantScoped.POST("/staffs", middleware.RequireTenantRole(userTenantRepo, "id", domain.RoleRH), staffHandler.Create)
 
 			// Relatórios de auditoria (painel de consulta): /reports traz só a mais
 			// recente de cada dia; /reports/history traz o histórico completo, inclusive
@@ -169,22 +176,26 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 			tenantScoped.GET("/occurrence-events", occurrenceHandler.TenantEvents)
 
 			// Revisão mensal (Feature 3) — ?competencia=YYYY-MM em todas as cinco.
+			// Escritas (confirmar condição manual, encerrar) exigem RH — é ato
+			// administrativo, mesmo nível de configurações. Reabrir fica sem papel
+			// mínimo por ora: ponto em aberto #2 do documento funcional (qual perfil
+			// pode reabrir ainda não foi decidido).
 			tenantScoped.GET("/monthly-reviews", monthlyReviewHandler.Get)
-			tenantScoped.PATCH("/monthly-reviews", monthlyReviewHandler.UpdateManualConditions)
-			tenantScoped.POST("/monthly-reviews/close", monthlyReviewHandler.Close)
+			tenantScoped.PATCH("/monthly-reviews", middleware.RequireTenantRole(userTenantRepo, "id", domain.RoleRH), monthlyReviewHandler.UpdateManualConditions)
+			tenantScoped.POST("/monthly-reviews/close", middleware.RequireTenantRole(userTenantRepo, "id", domain.RoleRH), monthlyReviewHandler.Close)
 			tenantScoped.POST("/monthly-reviews/reopen", monthlyReviewHandler.Reopen)
 			tenantScoped.GET("/monthly-reviews/export", monthlyReviewHandler.Export)
 
-			// Filiais do tenant
+			// Filiais do tenant — cadastro é RH.
 			tenantScoped.GET("/branches", branchHandler.List)
-			tenantScoped.POST("/branches", branchHandler.Create)
+			tenantScoped.POST("/branches", middleware.RequireTenantRole(userTenantRepo, "id", domain.RoleRH), branchHandler.Create)
 
 			// Equipamentos (relógios de ponto) sincronizados do tenant — somente leitura.
 			tenantScoped.GET("/equipamentos", equipmentHandler.List)
 
-			// Advertências do tenant
+			// Advertências do tenant — emitir é ação de Gestor.
 			tenantScoped.GET("/warnings", warningHandler.List)
-			tenantScoped.POST("/warnings", warningHandler.Create)
+			tenantScoped.POST("/warnings", middleware.RequireTenantRole(userTenantRepo, "id", domain.RoleGestor), warningHandler.Create)
 
 			// Colaboradores sincronizados (espelho local do tenant) — só ativos
 			tenantScoped.GET("/collaborators", collaboratorHandler.List)
@@ -199,13 +210,15 @@ func SetupRouter(db *gorm.DB, publisher handlers.EventPublisher, whatsappMgr dom
 			// auditoria) — ?start_date=&end_date= (ambos obrigatórios).
 			tenantScoped.GET("/collaborators/:secullumId/punch-records", collaboratorHandler.PunchRecords)
 
-			// WhatsApp (instância da Evolution API por tenant)
+			// WhatsApp (instância da Evolution API por tenant) — conectar/desconectar é RH.
 			tenantScoped.GET("/whatsapp/status", whatsappHandler.Status)
-			tenantScoped.POST("/whatsapp/instance", whatsappHandler.Connect)
-			tenantScoped.DELETE("/whatsapp/instance", whatsappHandler.Disconnect)
+			tenantScoped.POST("/whatsapp/instance", middleware.RequireTenantRole(userTenantRepo, "id", domain.RoleRH), whatsappHandler.Connect)
+			tenantScoped.DELETE("/whatsapp/instance", middleware.RequireTenantRole(userTenantRepo, "id", domain.RoleRH), whatsappHandler.Disconnect)
 
-			// Usuários vinculados ao tenant
-			tenantScoped.GET("/users", tenantHandler.ListUsers)
+			// Usuários vinculados ao tenant — "quem tem acesso a este cliente" subiu de
+			// RH para Super Admin em relação ao docs/08 original (decisão registrada em
+			// docs/documento-funcional-compliance.md §7.6).
+			tenantScoped.GET("/users", middleware.RequireSuperAdmin(), tenantHandler.ListUsers)
 		}
 	}
 

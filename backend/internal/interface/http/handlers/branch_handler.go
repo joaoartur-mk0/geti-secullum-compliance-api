@@ -81,8 +81,10 @@ func toBranchResponse(b domain.Branch) branchResponse {
 
 // loadBranch carrega a filial e verifica o acesso do usuário ao tenant dono dela. As
 // rotas de filial usam o id próprio (:branchId), então o tenant só é conhecido depois de
-// ler o registro — mesma situação de staffs.
-func (h *BranchHandler) loadBranch(c *gin.Context, op string) (*domain.Branch, error) {
+// ler o registro — mesma situação de staffs. `min` é o papel mínimo exigido: Get passa
+// domain.RoleDiretoria (piso de leitura, mesmo comportamento de ensureTenantAccess); as
+// escritas (Update, Delete, AddDevice, ...) passam domain.RoleRH (docs/08 §5.3).
+func (h *BranchHandler) loadBranch(c *gin.Context, op string, min domain.Role) (*domain.Branch, error) {
 	id, err := idParam(c, op, "branchId")
 	if err != nil {
 		return nil, err
@@ -91,7 +93,7 @@ func (h *BranchHandler) loadBranch(c *gin.Context, op string) (*domain.Branch, e
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureTenantAccess(c, h.userTenantRepo, op, branch.TenantID); err != nil {
+	if err := requireRole(c, h.userTenantRepo, op, branch.TenantID, min); err != nil {
 		return nil, err
 	}
 	return branch, nil
@@ -157,7 +159,7 @@ func (h *BranchHandler) List(c *gin.Context) {
 func (h *BranchHandler) Get(c *gin.Context) {
 	const op = "BranchHandler.Get"
 
-	branch, err := h.loadBranch(c, op)
+	branch, err := h.loadBranch(c, op, domain.RoleDiretoria)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -169,7 +171,7 @@ func (h *BranchHandler) Get(c *gin.Context) {
 func (h *BranchHandler) Update(c *gin.Context) {
 	const op = "BranchHandler.Update"
 
-	branch, err := h.loadBranch(c, op)
+	branch, err := h.loadBranch(c, op, domain.RoleRH)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -195,7 +197,7 @@ func (h *BranchHandler) Update(c *gin.Context) {
 func (h *BranchHandler) Delete(c *gin.Context) {
 	const op = "BranchHandler.Delete"
 
-	branch, err := h.loadBranch(c, op)
+	branch, err := h.loadBranch(c, op, domain.RoleRH)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -211,7 +213,7 @@ func (h *BranchHandler) Delete(c *gin.Context) {
 func (h *BranchHandler) AddDevice(c *gin.Context) {
 	const op = "BranchHandler.AddDevice"
 
-	branch, err := h.loadBranch(c, op)
+	branch, err := h.loadBranch(c, op, domain.RoleRH)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -247,7 +249,7 @@ func (h *BranchHandler) AddDevice(c *gin.Context) {
 func (h *BranchHandler) RemoveDevice(c *gin.Context) {
 	const op = "BranchHandler.RemoveDevice"
 
-	branch, err := h.loadBranch(c, op)
+	branch, err := h.loadBranch(c, op, domain.RoleRH)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -277,7 +279,7 @@ func (h *BranchHandler) RemoveDevice(c *gin.Context) {
 func (h *BranchHandler) AddPayrollNumber(c *gin.Context) {
 	const op = "BranchHandler.AddPayrollNumber"
 
-	branch, err := h.loadBranch(c, op)
+	branch, err := h.loadBranch(c, op, domain.RoleRH)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -309,7 +311,7 @@ func (h *BranchHandler) AddPayrollNumber(c *gin.Context) {
 func (h *BranchHandler) RemovePayrollNumber(c *gin.Context) {
 	const op = "BranchHandler.RemovePayrollNumber"
 
-	branch, err := h.loadBranch(c, op)
+	branch, err := h.loadBranch(c, op, domain.RoleRH)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
