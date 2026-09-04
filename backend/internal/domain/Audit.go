@@ -21,6 +21,16 @@ func (s Severity) OrDefault(def Severity) Severity {
 	return s
 }
 
+// Valid indica se o valor é uma das três severidades conhecidas (validação de query
+// string em ?severity=).
+func (s Severity) Valid() bool {
+	switch s {
+	case SeverityAlert, SeverityCritical, SeverityOperational:
+		return true
+	}
+	return false
+}
+
 // PunchPair é um bloco de trabalho (entrada + saída correspondente). A Secullum
 // devolve até 5 pares por dia; um ponteiro nil significa "marcação ausente".
 type PunchPair struct {

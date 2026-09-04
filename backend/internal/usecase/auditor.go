@@ -38,6 +38,27 @@ const (
 	TipoTrabalhoEmFolga = "Trabalho em Dia de Folga/DSR"
 )
 
+// TypeRequiresAttachment diz se a tratativa (Feature 4) exige anexo para este tipo de
+// inconsistência. Tabela travada em docs/documento-funcional-compliance.md §4 — mudar
+// aqui sem atualizar aquela seção diverge spec e código.
+//
+// TipoBatidaEsquecida e TipoCargaNaoApurada: "Não" na tabela — nunca exigem.
+// TipoAlertaHoraExtra: "Opcional" na tabela — o usuário pode anexar, mas não é bloqueado
+// sem anexo, por isso devolve false aqui (é um gate de exigência, não de permissão).
+func TypeRequiresAttachment(inconsistencyType string) bool {
+	switch inconsistencyType {
+	case TipoAlmocoReduzido, TipoInterjornada, TipoHoraExtra, TipoTrabalhoEmFolga:
+		return true
+	case TipoBatidaEsquecida, TipoAlertaHoraExtra, TipoCargaNaoApurada:
+		return false
+	default:
+		// Tipo desconhecido: exige anexo por segurança em vez de liberar tratativa sem
+		// evidência — um tipo novo não catalogado aqui não deve herdar "sem anexo" por
+		// omissão.
+		return true
+	}
+}
+
 type AuditorService struct{}
 
 func NewAuditorService() *AuditorService {

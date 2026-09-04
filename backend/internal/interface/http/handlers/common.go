@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -67,6 +68,39 @@ func ensureTenantAccess(c *gin.Context, repo domain.UserTenantRepository, op str
 	}
 	if !hasAccess {
 		return domain.NewForbidden(op, "você não tem acesso a este tenant", nil)
+	}
+	return nil
+}
+
+// requireRole confere papel mínimo para um tenant descoberto DENTRO do handler (ex.:
+// /warnings/:warningId, cujo tenant só se conhece depois de carregar a advertência) —
+// mesmo motivo de ensureTenantAccess existir separado de middleware.RequireTenantAccess.
+// Substitui ensureTenantAccess (que só confere "tem acesso", piso Diretoria) nas rotas
+// que exigem mais que leitura — ver docs/08_Roles_And_Permissions_Contract.md §6.2.
+func requireRole(c *gin.Context, repo domain.UserTenantRepository, op string, tenantID int, min domain.Role) error {
+	if v, ok := c.Get(middleware.ContextIsSuperAdminKey); ok {
+		if isSuperAdmin, _ := v.(bool); isSuperAdmin {
+			return nil
+		}
+	}
+
+	userID, _ := c.Get(middleware.ContextUserIDKey)
+	uid, _ := userID.(uint)
+
+	role, err := repo.GetRole(uid, tenantID)
+	if err != nil {
+		// "Sem vínculo" (NotFound) vira 403 amigável; qualquer outro erro (falha real de
+		// banco) segue como está — RequireTenantAccess, no mesmo pacote, já faz essa
+		// distinção, e mascarar um 500 de infraestrutura como "sem permissão" esconde o
+		// problema real de quem for investigar depois.
+		var appErr *domain.AppError
+		if errors.As(err, &appErr) && appErr.Kind == domain.KindNotFound {
+			return domain.NewForbidden(op, "você não tem acesso a este tenant", nil)
+		}
+		return err
+	}
+	if !role.Valid() || !role.AtLeast(min) {
+		return domain.NewForbidden(op, "seu perfil de acesso não permite esta ação", nil)
 	}
 	return nil
 }

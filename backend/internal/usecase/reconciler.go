@@ -139,9 +139,10 @@ func planReconciliation(
 			continue
 		}
 
-		// Ignorada manualmente: o usuário já decidiu. Continuar apurando não a ressuscita
-		// — só registramos que ela ainda está lá (last_seen_at), sem evento e sem alarde.
-		if prev.State == domain.OccurrenceResolvedManual {
+		// Já tem desfecho humano (ignorada ou tratada): o usuário já decidiu. Continuar
+		// apurando não a ressuscita — só registramos que ela ainda está lá (last_seen_at),
+		// sem evento e sem alarde. Os dois estados são igualmente pegajosos.
+		if prev.State.Sticky() {
 			touched := prev
 			touched.LastSeenAt = now
 			touched.TimesSeen = prev.TimesSeen + 1

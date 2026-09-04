@@ -50,6 +50,14 @@ func toUserResponse(u domain.User) userResponse {
 	return userResponse{ID: u.ID, Name: u.Name, Email: u.Email, IsSuperAdmin: u.IsSuperAdmin, Active: u.Active}
 }
 
+// userWithRoleResponse é userResponse mais o papel do usuário NUM tenant específico —
+// usado só em GET /tenants/:id/users (docs/08 §7.4), onde "quem tem acesso e com que
+// papel" é a pergunta da tela.
+type userWithRoleResponse struct {
+	userResponse
+	Role string `json:"role"`
+}
+
 // userIDParam extrai o :id da rota como uint (o domínio de User usa gorm.Model,
 // cujo ID nunca é negativo).
 func userIDParam(c *gin.Context, op string) (uint, error) {
@@ -124,21 +132,93 @@ func (h *UserHandler) Login(c *gin.Context) {
 	}
 
 	// Tenants aos quais o usuário tem acesso, para o frontend montar o seletor de
-	// tenant sem precisar de uma segunda chamada logo após o login.
+	// tenant sem precisar de uma segunda chamada logo após o login. Cada um já vem com
+	// o papel do usuário NAQUELE tenant (docs/08 §4.1) — super admin vê "super_admin" em
+	// todos, sem precisar cruzar com is_super_admin em cada tela.
 	tenants, err := h.userTenantRepo.ListTenantsForUser(user.ID)
 	if err != nil {
 		httperr.Respond(c, err)
 		return
 	}
 	tenantIDs := make([]int, 0, len(tenants))
+	tenantsOut := make([]tenantLoginResponse, 0, len(tenants))
 	for _, t := range tenants {
 		tenantIDs = append(tenantIDs, t.ID)
+		role := domain.RoleSuperAdmin
+		if !user.IsSuperAdmin {
+			r, err := h.userTenantRepo.GetRole(user.ID, t.ID)
+			if err != nil {
+				continue // vínculo inconsistente: não expõe um tenant sem papel resolvido
+			}
+			role = string(r)
+		}
+		tenantsOut = append(tenantsOut, tenantLoginResponse{ID: t.ID, Name: t.Name, Role: role})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"token":      token,
-		"user":       toUserResponse(*user),
+		"token": token,
+		"user":  toUserResponse(*user),
+		// tenant_ids é mantido durante a transição — sai quando o frontend migrar para
+		// ler só `tenants` (docs/08 §4.1).
 		"tenant_ids": tenantIDs,
+		"tenants":    tenantsOut,
+	})
+}
+
+// tenantLoginResponse é o formato mínimo de tenant exposto no login — id, nome e o
+// papel do usuário NAQUELE tenant. Ver docs/08_Roles_And_Permissions_Contract.md §4.1.
+type tenantLoginResponse struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+// UpdateSuperAdmin — PATCH /api/v1/users/:id/super-admin
+// Promove/rebaixa um usuário a super admin (só super admin). Resolve a pendência
+// registrada no doc de auth: hoje só dá para virar super admin via seed ou UPDATE
+// direto no banco.
+//
+// Duas regras (docs/08 §7.3): um super admin não pode rebaixar A SI MESMO — deixaria o
+// sistema sem nenhum super admin se fosse o único —, e a alteração só vale no PRÓXIMO
+// LOGIN do alvo, porque is_super_admin já viajou dentro do JWT emitido e não há
+// revogação de token hoje.
+func (h *UserHandler) UpdateSuperAdmin(c *gin.Context) {
+	const op = "UserHandler.UpdateSuperAdmin"
+
+	id, err := userIDParam(c, op)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	var req struct {
+		IsSuperAdmin bool `json:"is_super_admin"`
+	}
+	if err := bindJSON(c, op, &req); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	if uid := actorUserID(c); !req.IsSuperAdmin && uid != nil && id == uint(*uid) {
+		httperr.Respond(c, domain.NewValidation(op, "não é possível rebaixar a si mesmo", nil).
+			WithDetails("peça a outro super admin para alterar seu próprio perfil"))
+		return
+	}
+
+	if err := h.userRepo.SetSuperAdmin(id, req.IsSuperAdmin); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	user, err := h.userRepo.GetByID(id)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "usuário atualizado — a mudança vale a partir do próximo login",
+		"user":    toUserResponse(*user),
 	})
 }
 

@@ -31,6 +31,15 @@ type TenantSettings struct {
 	// usecase/scheduler.go). Vazio significa "sem agendamento": o tenant só é auditado
 	// manualmente (Painel).
 	Horario string
+
+	// RevisaoMensalDiaCorte é o dia do mês (1-31) que define a borda da competência da
+	// revisão mensal (Feature 3) — configurado NESTE sistema, não herdado da Secullum
+	// (que tem seu próprio Empresa.DiaFechamentoPonto, usado só para o ponto em si). Zero
+	// significa "mês calendário": a competência "2026-09" vai de 01/09 a 30/09. Um valor
+	// D>0 desloca a competência para (D+1 do mês anterior) a (D do mês corrente) — ex.:
+	// D=25 faz "2026-09" ir de 26/08 a 25/09, o corte de folha típico. Ver
+	// docs/documento-funcional-compliance.md §7.5 regra 4.
+	RevisaoMensalDiaCorte int
 }
 
 // Staff representa o gestor que receberá o alerta

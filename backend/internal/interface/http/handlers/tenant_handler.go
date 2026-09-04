@@ -71,12 +71,15 @@ func toDomainTenant(req CreateTenantRequest) *domain.Tenant {
 	}
 }
 
-// tenantResponse é o DTO de saída (não expõe relacionamentos pesados).
+// tenantResponse é o DTO de saída (não expõe relacionamentos pesados). Role é omitido
+// (vazio) fora dos contextos que resolvem o papel do usuário no tenant (login, GET
+// /tenants) — ver docs/08_Roles_And_Permissions_Contract.md §4.
 type tenantResponse struct {
 	ID                 int    `json:"id"`
 	Name               string `json:"name"`
 	SecullumDatabaseID int    `json:"secullum_database_id"`
 	Active             bool   `json:"active"`
+	Role               string `json:"role,omitempty"`
 }
 
 func toTenantResponse(t *domain.Tenant) tenantResponse {
@@ -86,6 +89,22 @@ func toTenantResponse(t *domain.Tenant) tenantResponse {
 		SecullumDatabaseID: t.SecullumDatabaseID,
 		Active:             t.Active,
 	}
+}
+
+// tenantResponseWithRole resolve e embute o papel do usuário `uid` no tenant `t` —
+// "super_admin" para super admin (nenhuma linha em user_tenants necessária), o papel do
+// vínculo para os demais. Papel não encontrado (nunca deveria acontecer para um tenant
+// que ListTenantsForUser já filtrou) fica vazio em vez de quebrar a resposta inteira.
+func tenantResponseWithRole(userTenantRepo domain.UserTenantRepository, t *domain.Tenant, uid uint, isSuperAdminUser bool) tenantResponse {
+	out := toTenantResponse(t)
+	if isSuperAdminUser {
+		out.Role = domain.RoleSuperAdmin
+		return out
+	}
+	if role, err := userTenantRepo.GetRole(uid, t.ID); err == nil {
+		out.Role = string(role)
+	}
+	return out
 }
 
 // Create — POST /api/v1/tenants
@@ -148,12 +167,15 @@ func (h *TenantHandler) List(c *gin.Context) {
 		err     error
 	)
 
-	if isSuperAdmin, _ := c.Get(middleware.ContextIsSuperAdminKey); isSuperAdmin == true {
+	isSuperAdminUser, _ := c.Get(middleware.ContextIsSuperAdminKey)
+	superAdmin, _ := isSuperAdminUser.(bool)
+
+	userID, _ := c.Get(middleware.ContextUserIDKey)
+	uid, _ := userID.(uint)
+
+	if superAdmin {
 		tenants, err = h.tenantRepo.List(includeInactive)
 	} else {
-		userID, _ := c.Get(middleware.ContextUserIDKey)
-		uid, _ := userID.(uint)
-
 		tenants, err = h.userTenantRepo.ListTenantsForUser(uid)
 		if err == nil && !includeInactive {
 			active := make([]*domain.Tenant, 0, len(tenants))
@@ -171,19 +193,26 @@ func (h *TenantHandler) List(c *gin.Context) {
 		return
 	}
 
+	// Papel do usuário ATIVO em cada tenant — é o que o AppShell usa quando o usuário
+	// troca de cliente no seletor, sem precisar de um novo login (docs/08 §4.2).
 	out := make([]tenantResponse, 0, len(tenants))
 	for _, t := range tenants {
-		out = append(out, toTenantResponse(t))
+		out = append(out, tenantResponseWithRole(h.userTenantRepo, t, uid, superAdmin))
 	}
 	c.JSON(http.StatusOK, gin.H{"tenants": out})
 }
 
 type addUserToTenantRequest struct {
 	UserID uint `json:"user_id" binding:"required"`
+	// Role é OBRIGATÓRIO — sem default aqui, mesmo a coluna tendo default 'rh': é esta
+	// rota que força a escolha consciente do papel na tela de cadastro (ver
+	// docs/08_Roles_And_Permissions_Contract.md §7.1). O default da coluna só existe
+	// para preservar o acesso de vínculos criados ANTES desta coluna existir.
+	Role string `json:"role" binding:"required"`
 }
 
 // AddUser — POST /api/v1/tenants/:id/users
-// Vincula um usuário já existente ao tenant (só super admin).
+// Vincula um usuário já existente ao tenant, com um papel (só super admin).
 func (h *TenantHandler) AddUser(c *gin.Context) {
 	const op = "TenantHandler.AddUser"
 
@@ -199,11 +228,62 @@ func (h *TenantHandler) AddUser(c *gin.Context) {
 		return
 	}
 
-	if err := h.userTenantRepo.AddUserToTenant(req.UserID, tenantID); err != nil {
+	role := domain.Role(req.Role)
+	if !role.Valid() {
+		httperr.Respond(c, domain.NewValidation(op, "papel inválido", nil).
+			WithDetails("role deve ser rh, gestor ou diretoria"))
+		return
+	}
+
+	if err := h.userTenantRepo.AddUserToTenant(req.UserID, tenantID, role); err != nil {
 		httperr.Respond(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"message": "usuário vinculado ao tenant com sucesso"})
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "usuário vinculado ao tenant com sucesso",
+		"user_id": req.UserID, "tenant_id": tenantID, "role": string(role),
+	})
+}
+
+// UpdateUserRole — PATCH /api/v1/tenants/:id/users/:userId/role
+// Troca o papel de um vínculo já existente (só super admin) — sem este endpoint, mudar
+// alguém de papel exigiria desvincular e vincular de novo.
+func (h *TenantHandler) UpdateUserRole(c *gin.Context) {
+	const op = "TenantHandler.UpdateUserRole"
+
+	tenantID, err := idParam(c, op, "id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	userID, err := idParam(c, op, "userId")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	var req struct {
+		Role string `json:"role" binding:"required"`
+	}
+	if err := bindJSON(c, op, &req); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	role := domain.Role(req.Role)
+	if !role.Valid() {
+		httperr.Respond(c, domain.NewValidation(op, "papel inválido", nil).
+			WithDetails("role deve ser rh, gestor ou diretoria"))
+		return
+	}
+
+	if err := h.userTenantRepo.UpdateRole(uint(userID), tenantID, role); err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "perfil de acesso atualizado",
+		"user_id": userID, "tenant_id": tenantID, "role": string(role),
+	})
 }
 
 // RemoveUser — DELETE /api/v1/tenants/:id/users/:userId
@@ -246,9 +326,9 @@ func (h *TenantHandler) ListUsers(c *gin.Context) {
 		return
 	}
 
-	out := make([]userResponse, 0, len(users))
+	out := make([]userWithRoleResponse, 0, len(users))
 	for _, u := range users {
-		out = append(out, toUserResponse(u))
+		out = append(out, userWithRoleResponse{userResponse: toUserResponse(u.User), Role: string(u.Role)})
 	}
 	c.JSON(http.StatusOK, gin.H{"users": out})
 }

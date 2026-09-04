@@ -81,14 +81,15 @@ func (r *tenantRepository) Save(tenant *domain.Tenant) error {
 		SecullumDatabaseID: tenant.SecullumDatabaseID,
 		Active:             true,
 		Settings: &models.TenantSettings{
-			Almoco:               settings.Almoco,
-			Interjornada:         settings.Interjornada,
-			Hextras:              settings.Hextras,
-			Esquecimento:         settings.Esquecimento,
-			AlmocoSeverity:       string(settings.AlmocoSeverity),
-			InterjornadaSeverity: string(settings.InterjornadaSeverity),
-			EsquecimentoSeverity: string(settings.EsquecimentoSeverity),
-			Horarios:             horariosJSON,
+			Almoco:                settings.Almoco,
+			Interjornada:          settings.Interjornada,
+			Hextras:               settings.Hextras,
+			Esquecimento:          settings.Esquecimento,
+			AlmocoSeverity:        string(settings.AlmocoSeverity),
+			InterjornadaSeverity:  string(settings.InterjornadaSeverity),
+			EsquecimentoSeverity:  string(settings.EsquecimentoSeverity),
+			Horarios:              horariosJSON,
+			RevisaoMensalDiaCorte: settings.RevisaoMensalDiaCorte,
 		},
 	}
 
@@ -228,14 +229,15 @@ func (r *tenantRepository) UpdateSettings(tenantID int, settings *domain.TenantS
 	}
 
 	res := r.db.Model(&models.TenantSettings{}).Where("tenant_id = ?", tenantID).Updates(map[string]interface{}{
-		"almoco":                settings.Almoco,
-		"interjornada":          settings.Interjornada,
-		"hextras":               settings.Hextras,
-		"esquecimento":          settings.Esquecimento,
-		"almoco_severity":       string(settings.AlmocoSeverity),
-		"interjornada_severity": string(settings.InterjornadaSeverity),
-		"esquecimento_severity": string(settings.EsquecimentoSeverity),
-		"horarios":              horariosJSON,
+		"almoco":                   settings.Almoco,
+		"interjornada":             settings.Interjornada,
+		"hextras":                  settings.Hextras,
+		"esquecimento":             settings.Esquecimento,
+		"almoco_severity":          string(settings.AlmocoSeverity),
+		"interjornada_severity":    string(settings.InterjornadaSeverity),
+		"esquecimento_severity":    string(settings.EsquecimentoSeverity),
+		"horarios":                 horariosJSON,
+		"revisao_mensal_dia_corte": settings.RevisaoMensalDiaCorte,
 	})
 	if res.Error != nil {
 		return domain.NewInternal(op, "falha ao atualizar configurações", res.Error)
@@ -285,14 +287,15 @@ func toDomainSettings(m *models.TenantSettings) *domain.TenantSettings {
 		horario = horarios[0]
 	}
 	return &domain.TenantSettings{
-		Almoco:               m.Almoco,
-		Interjornada:         m.Interjornada,
-		Hextras:              m.Hextras,
-		Esquecimento:         m.Esquecimento,
-		AlmocoSeverity:       domain.Severity(m.AlmocoSeverity),
-		InterjornadaSeverity: domain.Severity(m.InterjornadaSeverity),
-		EsquecimentoSeverity: domain.Severity(m.EsquecimentoSeverity),
-		Horario:              horario,
+		Almoco:                m.Almoco,
+		Interjornada:          m.Interjornada,
+		Hextras:               m.Hextras,
+		Esquecimento:          m.Esquecimento,
+		AlmocoSeverity:        domain.Severity(m.AlmocoSeverity),
+		InterjornadaSeverity:  domain.Severity(m.InterjornadaSeverity),
+		EsquecimentoSeverity:  domain.Severity(m.EsquecimentoSeverity),
+		Horario:               horario,
+		RevisaoMensalDiaCorte: m.RevisaoMensalDiaCorte,
 	}
 }
 

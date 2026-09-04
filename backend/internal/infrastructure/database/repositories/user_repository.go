@@ -152,6 +152,22 @@ func (r *userRepository) Deactivate(id uint) error {
 	return r.setActive(op, id, false)
 }
 
+func (r *userRepository) SetSuperAdmin(id uint, isSuperAdmin bool) error {
+	const op = "userRepository.SetSuperAdmin"
+	if id == 0 {
+		return domain.NewInternal(op, "id is required", nil)
+	}
+
+	res := r.db.Model(&models.User{}).Where("id = ?", id).Update("is_super_admin", isSuperAdmin)
+	if res.Error != nil {
+		return domain.NewInternal(op, "failed to update user super admin state", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return domain.NewNotFound(op, "user not found", nil)
+	}
+	return nil
+}
+
 func (r *userRepository) setActive(op string, id uint, active bool) error {
 	if id == 0 {
 		return domain.NewInternal(op, "id is required", nil)

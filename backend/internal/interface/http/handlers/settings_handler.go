@@ -25,6 +25,10 @@ type UpdateSettingsRequest struct {
 	// Horario ("HH:MM") é o momento em que o agendador dispara sozinho o fechamento
 	// automático de D-1 (ver usecase/scheduler.go). Vazio = sem agendamento.
 	Horario string `json:"horario"`
+
+	// RevisaoMensalDiaCorte — ver domain.TenantSettings.RevisaoMensalDiaCorte. Zero = mês
+	// calendário.
+	RevisaoMensalDiaCorte int `json:"revisao_mensal_dia_corte"`
 }
 
 type SettingsHandler struct {
@@ -36,27 +40,36 @@ func NewSettingsHandler(repo domain.TenantRepository) *SettingsHandler {
 }
 
 type settingsResponse struct {
-	Almoco               bool   `json:"almoco"`
-	Interjornada         bool   `json:"interjornada"`
-	Hextras              bool   `json:"hextras"`
-	Esquecimento         bool   `json:"esquecimento"`
-	AlmocoSeverity       string `json:"almoco_severity"`
-	InterjornadaSeverity string `json:"interjornada_severity"`
-	EsquecimentoSeverity string `json:"esquecimento_severity"`
-	Horario              string `json:"horario"`
+	Almoco                bool   `json:"almoco"`
+	Interjornada          bool   `json:"interjornada"`
+	Hextras               bool   `json:"hextras"`
+	Esquecimento          bool   `json:"esquecimento"`
+	AlmocoSeverity        string `json:"almoco_severity"`
+	InterjornadaSeverity  string `json:"interjornada_severity"`
+	EsquecimentoSeverity  string `json:"esquecimento_severity"`
+	Horario               string `json:"horario"`
+	RevisaoMensalDiaCorte int    `json:"revisao_mensal_dia_corte"`
 }
 
 func toSettingsResponse(s *domain.TenantSettings) settingsResponse {
 	return settingsResponse{
-		Almoco:               s.Almoco,
-		Interjornada:         s.Interjornada,
-		Hextras:              s.Hextras,
-		Esquecimento:         s.Esquecimento,
-		AlmocoSeverity:       string(s.AlmocoSeverity),
-		InterjornadaSeverity: string(s.InterjornadaSeverity),
-		EsquecimentoSeverity: string(s.EsquecimentoSeverity),
-		Horario:              s.Horario,
+		Almoco:                s.Almoco,
+		Interjornada:          s.Interjornada,
+		Hextras:               s.Hextras,
+		Esquecimento:          s.Esquecimento,
+		AlmocoSeverity:        string(s.AlmocoSeverity),
+		InterjornadaSeverity:  string(s.InterjornadaSeverity),
+		EsquecimentoSeverity:  string(s.EsquecimentoSeverity),
+		Horario:               s.Horario,
+		RevisaoMensalDiaCorte: s.RevisaoMensalDiaCorte,
 	}
+}
+
+// validDiaCorte aceita 0 (mês calendário) ou um dia válido de mês (1-28, para não
+// depender de fevereiro ter 28/29 nem meses de 30/31 dias — um corte no dia 30 não existe
+// em fevereiro, e a competência ficaria ambígua).
+func validDiaCorte(d int) bool {
+	return d >= 0 && d <= 28
 }
 
 // validSeverity aceita vazio (usa default) ou os valores conhecidos.
@@ -129,16 +142,22 @@ func (h *SettingsHandler) Update(c *gin.Context) {
 			WithDetails("horario deve estar vazio ou no formato HH:MM"))
 		return
 	}
+	if !validDiaCorte(req.RevisaoMensalDiaCorte) {
+		httperr.Respond(c, domain.NewValidation(op, "dia de corte inválido", nil).
+			WithDetails("revisao_mensal_dia_corte deve estar entre 0 (mês calendário) e 28"))
+		return
+	}
 
 	settings := &domain.TenantSettings{
-		Almoco:               req.Almoco,
-		Interjornada:         req.Interjornada,
-		Hextras:              req.Hextras,
-		Esquecimento:         req.Esquecimento,
-		AlmocoSeverity:       domain.Severity(req.AlmocoSeverity),
-		InterjornadaSeverity: domain.Severity(req.InterjornadaSeverity),
-		EsquecimentoSeverity: domain.Severity(req.EsquecimentoSeverity),
-		Horario:              req.Horario,
+		Almoco:                req.Almoco,
+		Interjornada:          req.Interjornada,
+		Hextras:               req.Hextras,
+		Esquecimento:          req.Esquecimento,
+		AlmocoSeverity:        domain.Severity(req.AlmocoSeverity),
+		InterjornadaSeverity:  domain.Severity(req.InterjornadaSeverity),
+		EsquecimentoSeverity:  domain.Severity(req.EsquecimentoSeverity),
+		Horario:               req.Horario,
+		RevisaoMensalDiaCorte: req.RevisaoMensalDiaCorte,
 	}
 	if err := h.tenantRepo.UpdateSettings(tenantID, settings); err != nil {
 		httperr.Respond(c, err)

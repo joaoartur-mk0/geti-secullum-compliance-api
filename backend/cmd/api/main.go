@@ -55,6 +55,11 @@ func main() {
 		&models.BranchDevice{},
 		&models.BranchPayrollNumber{},
 		&models.Warning{},
+		&models.Treatment{},
+		&models.Attachment{},
+		&models.AttachmentDownload{},
+		&models.MonthlyReview{},
+		&models.MonthlyReviewEvent{},
 	)
 	if err != nil {
 		log.Fatalf("Falha no AutoMigrate do GORM: %v", err)

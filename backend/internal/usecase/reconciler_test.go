@@ -39,7 +39,11 @@ func (f *fakeOccurrenceRepo) ListByTenantAndDate(tenantID int, date time.Time) (
 	return out, nil
 }
 
-func (f *fakeOccurrenceRepo) List(domain.OccurrenceFilter) ([]domain.Occurrence, error) {
+func (f *fakeOccurrenceRepo) List(domain.OccurrenceFilter) ([]domain.Occurrence, int, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeOccurrenceRepo) ListEventsByTenant(domain.OccurrenceEventFilter) ([]domain.OccurrenceEvent, error) {
 	return nil, nil
 }
 

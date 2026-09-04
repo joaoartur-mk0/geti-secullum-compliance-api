@@ -16,6 +16,10 @@ type UserRepository interface {
 	Delete(id uint) error
 	Activate(id uint) error
 	Deactivate(id uint) error
+	// SetSuperAdmin promove/rebaixa um usuário a super admin. A alteração só vale no
+	// PRÓXIMO LOGIN do alvo — is_super_admin está dentro do JWT já emitido, e não há
+	// revogação de token hoje (docs/08 §7.3).
+	SetSuperAdmin(id uint, isSuperAdmin bool) error
 	GetByID(id uint) (*User, error)
 	GetByEmail(email string) (*User, error)
 	List() ([]User, error)

@@ -19,6 +19,16 @@ type Collaborator struct {
 	// é o filtro de GET /collaborators (só ativos).
 	Demitido bool `gorm:"not null;default:false;index" json:"demitido"`
 
+	// Departamento, Função e Empresa vêm crus da Secullum, sem normalização — ver
+	// domain.Collaborator. Indexados porque alimentam filtro por tenant.
+	DepartamentoID   *int   `gorm:"index:idx_collaborator_departamento" json:"departamento_id"`
+	Departamento     string `gorm:"type:varchar(255)" json:"departamento"`
+	FuncaoID         *int   `gorm:"index:idx_collaborator_funcao" json:"funcao_id"`
+	Funcao           string `gorm:"type:varchar(255)" json:"funcao"`
+	EmpresaID        *int   `gorm:"index:idx_collaborator_empresa" json:"empresa_id"`
+	Empresa          string `gorm:"type:varchar(255)" json:"empresa"`
+	EmpresaDocumento string `gorm:"type:varchar(20)" json:"empresa_documento"`
+
 	// Relacionamentos GORM
 	Schedules []CollaboratorSchedule `gorm:"foreignKey:CollaboratorID" json:"schedules,omitempty"`
 }

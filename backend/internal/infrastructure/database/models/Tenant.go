@@ -29,4 +29,8 @@ type TenantSettings struct {
 	EsquecimentoSeverity string `gorm:"type:varchar(10);default:'CRITICO'" json:"esquecimento_severity"`
 
 	Horarios datatypes.JSON `gorm:"type:jsonb" json:"horarios"`
+
+	// RevisaoMensalDiaCorte — ver domain.TenantSettings.RevisaoMensalDiaCorte. Zero
+	// (default) significa mês calendário.
+	RevisaoMensalDiaCorte int `gorm:"not null;default:0" json:"revisao_mensal_dia_corte"`
 }

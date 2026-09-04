@@ -62,7 +62,17 @@ const (
 	OccurrenceResolvedAuto OccurrenceState = "resolvida_automatica"
 	// OccurrenceResolvedManual — um usuário decidiu ignorar. É PEGAJOSO: varreduras
 	// seguintes não reabrem a ocorrência, mesmo que ela continue sendo apurada.
+	// EXIBIDA NA TELA COMO "Ignorada" — nunca como "tratada"/"resolvida"/"concluída".
+	// Ignorar significa que o apontamento não procedia; tratar (abaixo) significa que
+	// havia um problema real e alguém agiu. Confundir os dois apaga a distinção que
+	// motivou a Feature 4 — ver docs/documento-funcional-compliance.md §1 e §3.1.
 	OccurrenceResolvedManual OccurrenceState = "resolvida_manual"
+	// OccurrenceTreated — um usuário registrou uma tratativa (Feature 4): houve ação real
+	// sobre o problema, com justificativa e, quando o tipo exige, anexo. Também PEGAJOSO.
+	// NUNCA fundida com OccurrenceResolvedAuto: a primeira é trabalho humano registrado
+	// aqui, a segunda é o dado corrigido na origem — são as duas metades da dor que
+	// originou o ciclo (quanto foi resolvido, e como).
+	OccurrenceTreated OccurrenceState = "tratada"
 )
 
 // Open indica se a ocorrência ainda demanda ação do gestor.
@@ -70,10 +80,17 @@ func (s OccurrenceState) Open() bool {
 	return s == OccurrenceOpen || s == OccurrenceUpdated
 }
 
+// Sticky indica se a ocorrência já tem desfecho humano e a reconciliação automática NÃO
+// deve reabri-la, mesmo que a inconsistência volte a ser apurada. Ignorada e tratada são
+// igualmente pegajosas — só resolvida_automatica pode ser revertida por uma nova varredura.
+func (s OccurrenceState) Sticky() bool {
+	return s == OccurrenceResolvedManual || s == OccurrenceTreated
+}
+
 // Valid indica se o valor é um dos estados conhecidos (validação de query string).
 func (s OccurrenceState) Valid() bool {
 	switch s {
-	case OccurrenceOpen, OccurrenceUpdated, OccurrenceResolvedAuto, OccurrenceResolvedManual:
+	case OccurrenceOpen, OccurrenceUpdated, OccurrenceResolvedAuto, OccurrenceResolvedManual, OccurrenceTreated:
 		return true
 	}
 	return false
@@ -137,11 +154,13 @@ func DayOf(t time.Time) time.Time {
 type OccurrenceEventType string
 
 const (
-	EventCreated        OccurrenceEventType = "criada"
-	EventUpdated        OccurrenceEventType = "atualizada"
-	EventResolvedAuto   OccurrenceEventType = "resolvida_automatica"
-	EventResolvedManual OccurrenceEventType = "resolvida_manual"
-	EventReopened       OccurrenceEventType = "reaberta"
+	EventCreated         OccurrenceEventType = "criada"
+	EventUpdated         OccurrenceEventType = "atualizada"
+	EventResolvedAuto    OccurrenceEventType = "resolvida_automatica"
+	EventResolvedManual  OccurrenceEventType = "resolvida_manual"
+	EventReopened        OccurrenceEventType = "reaberta"
+	EventTreated         OccurrenceEventType = "tratada"
+	EventTreatmentUndone OccurrenceEventType = "tratativa_desfeita"
 )
 
 // OccurrenceEvent é uma linha do log append-only de transições. É o "mantendo os logs" do
@@ -160,6 +179,13 @@ type OccurrenceEvent struct {
 	Reason          string // motivo informado no "ignorar"
 	ActorUserID     *int   // usuário que agiu; nil quando a transição foi automática
 	CreatedAt       time.Time
+
+	// CollaboratorName e OccurrenceType só são preenchidos pela consulta agregada
+	// (ListEventsByTenant) — evita N+1 no painel, que precisa mostrar de quem e de que
+	// tipo é cada linha do histórico sem uma chamada por evento. ListEvents (trilha de
+	// uma única ocorrência) não preenche, porque o chamador já tem essa informação.
+	CollaboratorName string
+	OccurrenceType   string
 }
 
 // OccurrenceFilter são os recortes aceitos na consulta de ocorrências pelo painel.
@@ -169,7 +195,32 @@ type OccurrenceFilter struct {
 	StartDate      *time.Time
 	EndDate        *time.Time
 	States         []OccurrenceState
+	Severities     []Severity
+	Types          []string
 	CollaboratorID *int
+	// CollaboratorIDs restringe a um conjunto de colaboradores (ex.: quem bate com um
+	// filtro de departamento/função/empresa) — diferente de CollaboratorID, que é UM só.
+	// Aplicado em SQL (IN), ANTES da paginação: filtrar em memória depois de paginar
+	// devolveria menos itens que `Limit` mesmo havendo mais correspondências na próxima
+	// página, e o `total` deixaria de bater com o que a página realmente contém.
+	CollaboratorIDs []int
+	// Limit/Offset paginam no servidor (ver docs/12_Revisao_Mensal_E_Tratativas_Backend_
+	// Contract.md §2.4). Limit == 0 significa "sem paginação" — devolve tudo, mantendo o
+	// comportamento anterior para quem ainda não pediu página.
+	Limit  int
+	Offset int
+}
+
+// OccurrenceEventFilter são os recortes aceitos na consulta agregada de eventos —
+// "o que foi tratado neste período, por quem" (Feature 1, histórico). Diferente de
+// ListEvents (que devolve a trilha de UMA ocorrência), esta consulta atravessa todas as
+// ocorrências do tenant num período. Campos zerados significam "sem filtro".
+type OccurrenceEventFilter struct {
+	TenantID    int
+	StartDate   *time.Time
+	EndDate     *time.Time
+	ActorUserID *int
+	Types       []OccurrenceEventType
 }
 
 // OccurrenceRepository é o contrato de persistência da máquina de estados.
@@ -180,8 +231,10 @@ type OccurrenceFilter struct {
 type OccurrenceRepository interface {
 	// ListByTenantAndDate devolve todas as ocorrências de um dia, em qualquer estado.
 	ListByTenantAndDate(tenantID int, date time.Time) ([]Occurrence, error)
-	// List aplica os filtros do painel, do mais recente para o mais antigo.
-	List(filter OccurrenceFilter) ([]Occurrence, error)
+	// List aplica os filtros do painel, do mais recente para o mais antigo. O segundo
+	// valor de retorno é o TOTAL que bate com o filtro (não com a página) — necessário
+	// para paginação server-side ter sentido no cliente.
+	List(filter OccurrenceFilter) ([]Occurrence, int, error)
 	GetByID(id int) (*Occurrence, error)
 	// ApplyChanges persiste, atomicamente, o resultado de uma reconciliação.
 	ApplyChanges(changes []OccurrenceChange) error
@@ -189,6 +242,10 @@ type OccurrenceRepository interface {
 	Ignore(id int, reason string, actorUserID *int) error
 	// ListEvents devolve o log de transições de uma ocorrência, do mais antigo ao mais recente.
 	ListEvents(occurrenceID int) ([]OccurrenceEvent, error)
+	// ListEventsByTenant responde "o que foi tratado neste período, por quem" — atravessa
+	// todas as ocorrências do tenant, do mais recente ao mais antigo, com o nome do
+	// colaborador e o tipo da ocorrência já embutidos.
+	ListEventsByTenant(filter OccurrenceEventFilter) ([]OccurrenceEvent, error)
 }
 
 // OccurrenceChangeKind diz ao repositório o que fazer com a ocorrência reconciliada.

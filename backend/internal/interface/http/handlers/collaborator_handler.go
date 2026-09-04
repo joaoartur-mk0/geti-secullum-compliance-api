@@ -39,31 +39,57 @@ func NewCollaboratorHandler(
 // Não inclui CPF/celular (dado pessoal desnecessário para os indicadores) nem as
 // jornadas (usadas só internamente pelo motor de auditoria).
 type collaboratorResponse struct {
-	ID         int    `json:"id"`
-	SecullumID int    `json:"secullum_id"`
-	Name       string `json:"name"`
+	ID           int    `json:"id"`
+	SecullumID   int    `json:"secullum_id"`
+	Name         string `json:"name"`
+	Departamento string `json:"departamento"`
+	Funcao       string `json:"funcao"`
+	Empresa      string `json:"empresa"`
 }
 
 // collaboratorHistoryResponse é a versão exposta em /collaborators/history — inclui
 // admissão/demissão, o que a lista padrão de ativos não precisa mostrar.
 type collaboratorHistoryResponse struct {
-	ID         int     `json:"id"`
-	SecullumID int     `json:"secullum_id"`
-	Name       string  `json:"name"`
-	Admissao   *string `json:"admissao"`
-	Demissao   *string `json:"demissao"`
-	Demitido   bool    `json:"demitido"`
+	ID           int     `json:"id"`
+	SecullumID   int     `json:"secullum_id"`
+	Name         string  `json:"name"`
+	Admissao     *string `json:"admissao"`
+	Demissao     *string `json:"demissao"`
+	Demitido     bool    `json:"demitido"`
+	Departamento string  `json:"departamento"`
+	Funcao       string  `json:"funcao"`
+	Empresa      string  `json:"empresa"`
 }
 
-// List — GET /api/v1/tenants/:id/collaborators
+// List — GET /api/v1/tenants/:id/collaborators?departamento_id=&funcao_id=&empresa_id=
 // Devolve o espelho local de colaboradores ATIVOS (sem Demissao) do tenant sincronizado
 // (via fila tenant.provisioning) e o total, para o painel de Indicadores mostrar quantos
 // funcionários estão sob auditoria. Funcionários desligados aparecem só em
 // GET /collaborators/history.
+//
+// Os três filtros são opcionais e combináveis. Filtrados em memória sobre a lista já
+// carregada — mesmo padrão hoje usado para filial em OccurrenceHandler.List — porque o
+// volume de colaboradores por tenant não justifica levar o filtro para o WHERE.
 func (h *CollaboratorHandler) List(c *gin.Context) {
 	const op = "CollaboratorHandler.List"
 
 	tenantID, err := idParam(c, op, "id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	departamentoID, err := optionalIntQuery(c, op, "departamento_id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	funcaoID, err := optionalIntQuery(c, op, "funcao_id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+	empresaID, err := optionalIntQuery(c, op, "empresa_id")
 	if err != nil {
 		httperr.Respond(c, err)
 		return
@@ -77,13 +103,65 @@ func (h *CollaboratorHandler) List(c *gin.Context) {
 
 	out := make([]collaboratorResponse, 0, len(collaborators))
 	for _, col := range collaborators {
+		if departamentoID != nil && (col.DepartamentoID == nil || *col.DepartamentoID != *departamentoID) {
+			continue
+		}
+		if funcaoID != nil && (col.FuncaoID == nil || *col.FuncaoID != *funcaoID) {
+			continue
+		}
+		if empresaID != nil && (col.EmpresaID == nil || *col.EmpresaID != *empresaID) {
+			continue
+		}
 		out = append(out, collaboratorResponse{
-			ID:         col.ID,
-			SecullumID: col.SecullumID,
-			Name:       col.Name,
+			ID:           col.ID,
+			SecullumID:   col.SecullumID,
+			Name:         col.Name,
+			Departamento: col.Departamento,
+			Funcao:       col.Funcao,
+			Empresa:      col.Empresa,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"collaborators": out, "total": len(out)})
+}
+
+// Filters — GET /api/v1/tenants/:id/collaborators/filters
+// Devolve os departamentos, funções e empresas distintos entre os colaboradores
+// sincronizados do tenant — para os seletores de filtro do painel (histórico, dashboards,
+// ranking). Sem normalização: reflete o cadastro exatamente como está na Secullum (ver
+// docs/documento-funcional-compliance.md §7.1).
+func (h *CollaboratorHandler) Filters(c *gin.Context) {
+	const op = "CollaboratorHandler.Filters"
+
+	tenantID, err := idParam(c, op, "id")
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	catalog, err := h.collabRepo.ListFilterCatalog(tenantID)
+	if err != nil {
+		httperr.Respond(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"departamentos": filterOptionsResponse(catalog.Departamentos),
+		"funcoes":       filterOptionsResponse(catalog.Funcoes),
+		"empresas":      filterOptionsResponse(catalog.Empresas),
+	})
+}
+
+type filterOptionResponse struct {
+	ID        int    `json:"id"`
+	Descricao string `json:"descricao"`
+}
+
+func filterOptionsResponse(options []domain.FilterOption) []filterOptionResponse {
+	out := make([]filterOptionResponse, 0, len(options))
+	for _, o := range options {
+		out = append(out, filterOptionResponse{ID: o.ID, Descricao: o.Descricao})
+	}
+	return out
 }
 
 // History — GET /api/v1/tenants/:id/collaborators/history
@@ -107,12 +185,15 @@ func (h *CollaboratorHandler) History(c *gin.Context) {
 	out := make([]collaboratorHistoryResponse, 0, len(collaborators))
 	for _, col := range collaborators {
 		out = append(out, collaboratorHistoryResponse{
-			ID:         col.ID,
-			SecullumID: col.SecullumID,
-			Name:       col.Name,
-			Admissao:   formatDatePtr(col.Admissao),
-			Demissao:   formatDatePtr(col.Demissao),
-			Demitido:   col.Demitido,
+			ID:           col.ID,
+			SecullumID:   col.SecullumID,
+			Name:         col.Name,
+			Admissao:     formatDatePtr(col.Admissao),
+			Demissao:     formatDatePtr(col.Demissao),
+			Demitido:     col.Demitido,
+			Departamento: col.Departamento,
+			Funcao:       col.Funcao,
+			Empresa:      col.Empresa,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"collaborators": out, "total": len(out)})

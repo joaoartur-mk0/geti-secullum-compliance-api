@@ -99,7 +99,7 @@ func (h *StaffHandler) Update(c *gin.Context) {
 		httperr.Respond(c, err)
 		return
 	}
-	if err := ensureTenantAccess(c, h.userTenantRepo, op, existing.TenantID); err != nil {
+	if err := requireRole(c, h.userTenantRepo, op, existing.TenantID, domain.RoleRH); err != nil {
 		httperr.Respond(c, err)
 		return
 	}
@@ -133,7 +133,7 @@ func (h *StaffHandler) Delete(c *gin.Context) {
 		httperr.Respond(c, err)
 		return
 	}
-	if err := ensureTenantAccess(c, h.userTenantRepo, op, existing.TenantID); err != nil {
+	if err := requireRole(c, h.userTenantRepo, op, existing.TenantID, domain.RoleRH); err != nil {
 		httperr.Respond(c, err)
 		return
 	}

@@ -66,16 +66,23 @@ func (r *collaboratorRepository) upsert(tx *gorm.DB, collaborator *domain.Collab
 
 	if res.RowsAffected == 0 {
 		model := &models.Collaborator{
-			TenantID:    collaborator.TenantID,
-			SecullumID:  collaborator.SecullumID,
-			Name:        collaborator.Name,
-			Cpf:         collaborator.Cpf,
-			Celular:     collaborator.Celular,
-			NumeroFolha: collaborator.NumeroFolha,
-			Admissao:    collaborator.Admissao,
-			Demissao:    collaborator.Demissao,
-			Demitido:    collaborator.Demitido,
-			Schedules:   schedules,
+			TenantID:         collaborator.TenantID,
+			SecullumID:       collaborator.SecullumID,
+			Name:             collaborator.Name,
+			Cpf:              collaborator.Cpf,
+			Celular:          collaborator.Celular,
+			NumeroFolha:      collaborator.NumeroFolha,
+			Admissao:         collaborator.Admissao,
+			Demissao:         collaborator.Demissao,
+			Demitido:         collaborator.Demitido,
+			DepartamentoID:   collaborator.DepartamentoID,
+			Departamento:     collaborator.Departamento,
+			FuncaoID:         collaborator.FuncaoID,
+			Funcao:           collaborator.Funcao,
+			EmpresaID:        collaborator.EmpresaID,
+			Empresa:          collaborator.Empresa,
+			EmpresaDocumento: collaborator.EmpresaDocumento,
+			Schedules:        schedules,
 		}
 		if err := tx.Create(model).Error; err != nil {
 			return domain.NewInternal(op, "falha ao criar colaborador", err)
@@ -88,13 +95,20 @@ func (r *collaboratorRepository) upsert(tx *gorm.DB, collaborator *domain.Collab
 	// a Secullum enviou nesta sincronização — inclusive para "reverter" um desligamento
 	// registrado por engano lá (Demissao volta a vir nula).
 	if err := tx.Model(&existing).Updates(map[string]interface{}{
-		"name":         collaborator.Name,
-		"cpf":          collaborator.Cpf,
-		"celular":      collaborator.Celular,
-		"numero_folha": collaborator.NumeroFolha,
-		"admissao":     collaborator.Admissao,
-		"demissao":     collaborator.Demissao,
-		"demitido":     collaborator.Demitido,
+		"name":              collaborator.Name,
+		"cpf":               collaborator.Cpf,
+		"celular":           collaborator.Celular,
+		"numero_folha":      collaborator.NumeroFolha,
+		"admissao":          collaborator.Admissao,
+		"demissao":          collaborator.Demissao,
+		"demitido":          collaborator.Demitido,
+		"departamento_id":   collaborator.DepartamentoID,
+		"departamento":      collaborator.Departamento,
+		"funcao_id":         collaborator.FuncaoID,
+		"funcao":            collaborator.Funcao,
+		"empresa_id":        collaborator.EmpresaID,
+		"empresa":           collaborator.Empresa,
+		"empresa_documento": collaborator.EmpresaDocumento,
 	}).Error; err != nil {
 		return domain.NewInternal(op, "falha ao atualizar colaborador", err)
 	}
@@ -164,6 +178,92 @@ func (r *collaboratorRepository) GetBySecullumID(tenantID int, secullumID int) (
 	return &collab, nil
 }
 
+// ListFilterCatalog devolve os departamentos, funções e empresas distintos entre os
+// colaboradores do tenant, para alimentar os seletores de filtro do painel. Deriva do
+// próprio cadastro (DISTINCT) — ver domain.CollaboratorFilterCatalog.
+func (r *collaboratorRepository) ListFilterCatalog(tenantID int) (domain.CollaboratorFilterCatalog, error) {
+	const op = "collaboratorRepository.ListFilterCatalog"
+
+	departamentos, err := distinctDepartamentos(r.db, tenantID)
+	if err != nil {
+		return domain.CollaboratorFilterCatalog{}, domain.NewInternal(op, "falha ao listar departamentos", err)
+	}
+	funcoes, err := distinctFuncoes(r.db, tenantID)
+	if err != nil {
+		return domain.CollaboratorFilterCatalog{}, domain.NewInternal(op, "falha ao listar funções", err)
+	}
+	empresas, err := distinctEmpresas(r.db, tenantID)
+	if err != nil {
+		return domain.CollaboratorFilterCatalog{}, domain.NewInternal(op, "falha ao listar empresas", err)
+	}
+
+	return domain.CollaboratorFilterCatalog{
+		Departamentos: departamentos,
+		Funcoes:       funcoes,
+		Empresas:      empresas,
+	}, nil
+}
+
+// filterOptionRow espelha o par (id, descrição) que as três consultas abaixo devolvem.
+type filterOptionRow struct {
+	ID        int
+	Descricao string
+}
+
+func toFilterOptions(rows []filterOptionRow) []domain.FilterOption {
+	out := make([]domain.FilterOption, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.FilterOption{ID: r.ID, Descricao: r.Descricao})
+	}
+	return out
+}
+
+// As três consultas abaixo são deliberadamente repetidas em vez de um único helper
+// parametrizado por nome de coluna: SQL nunca é montado por concatenação neste
+// repositório, e os nomes de coluna ficam como literais na própria query.
+
+func distinctDepartamentos(db *gorm.DB, tenantID int) ([]domain.FilterOption, error) {
+	var rows []filterOptionRow
+	err := db.Model(&models.Collaborator{}).
+		Select("departamento_id AS id, departamento AS descricao").
+		Where("tenant_id = ? AND departamento_id IS NOT NULL", tenantID).
+		Distinct().
+		Order("departamento_id").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return toFilterOptions(rows), nil
+}
+
+func distinctFuncoes(db *gorm.DB, tenantID int) ([]domain.FilterOption, error) {
+	var rows []filterOptionRow
+	err := db.Model(&models.Collaborator{}).
+		Select("funcao_id AS id, funcao AS descricao").
+		Where("tenant_id = ? AND funcao_id IS NOT NULL", tenantID).
+		Distinct().
+		Order("funcao_id").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return toFilterOptions(rows), nil
+}
+
+func distinctEmpresas(db *gorm.DB, tenantID int) ([]domain.FilterOption, error) {
+	var rows []filterOptionRow
+	err := db.Model(&models.Collaborator{}).
+		Select("empresa_id AS id, empresa AS descricao").
+		Where("tenant_id = ? AND empresa_id IS NOT NULL", tenantID).
+		Distinct().
+		Order("empresa_id").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return toFilterOptions(rows), nil
+}
+
 func toModelSchedules(schedules []domain.CollaboratorSchedule) []models.CollaboratorSchedule {
 	out := make([]models.CollaboratorSchedule, 0, len(schedules))
 	for _, s := range schedules {
@@ -181,16 +281,23 @@ func toModelSchedules(schedules []domain.CollaboratorSchedule) []models.Collabor
 
 func toDomainCollaborator(m *models.Collaborator) domain.Collaborator {
 	c := domain.Collaborator{
-		ID:          m.ID,
-		TenantID:    m.TenantID,
-		SecullumID:  m.SecullumID,
-		Name:        m.Name,
-		Cpf:         m.Cpf,
-		Celular:     m.Celular,
-		NumeroFolha: m.NumeroFolha,
-		Admissao:    m.Admissao,
-		Demissao:    m.Demissao,
-		Demitido:    m.Demitido,
+		ID:               m.ID,
+		TenantID:         m.TenantID,
+		SecullumID:       m.SecullumID,
+		Name:             m.Name,
+		Cpf:              m.Cpf,
+		Celular:          m.Celular,
+		NumeroFolha:      m.NumeroFolha,
+		Admissao:         m.Admissao,
+		Demissao:         m.Demissao,
+		Demitido:         m.Demitido,
+		DepartamentoID:   m.DepartamentoID,
+		Departamento:     m.Departamento,
+		FuncaoID:         m.FuncaoID,
+		Funcao:           m.Funcao,
+		EmpresaID:        m.EmpresaID,
+		Empresa:          m.Empresa,
+		EmpresaDocumento: m.EmpresaDocumento,
 	}
 	for _, s := range m.Schedules {
 		c.Schedules = append(c.Schedules, domain.CollaboratorSchedule{
