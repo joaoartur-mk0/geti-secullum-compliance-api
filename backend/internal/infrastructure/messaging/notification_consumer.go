@@ -41,15 +41,7 @@ func (c *NotificationConsumer) Start(ctx context.Context) error {
 
 	log.Println("[*] Worker de Notificações (WhatsApp) aguardando mensagens...")
 
-	for {
-		select {
-		case msg := <-msgs:
-			c.processMessage(msg)
-		case <-ctx.Done():
-			log.Println("[*] Desligando Worker de Notificações graciosamente...")
-			return nil
-		}
-	}
+	return consumeLoop(ctx, "Notificações", msgs, c.processMessage)
 }
 
 // reject segue o mesmo padrão dos demais workers: requeue=true aplica a pausa

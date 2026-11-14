@@ -41,15 +41,7 @@ func (c *ProvisioningConsumer) Start(ctx context.Context) error {
 
 	log.Println("[*] Worker de Provisionamento aguardando mensagens...")
 
-	for {
-		select {
-		case msg := <-msgs:
-			c.processMessage(msg)
-		case <-ctx.Done():
-			log.Println("[*] Desligando Worker de Provisionamento graciosamente...")
-			return nil
-		}
-	}
+	return consumeLoop(ctx, "Provisionamento", msgs, c.processMessage)
 }
 
 // reject rejeita a mensagem; em requeue aplica a mesma pausa do worker de auditoria

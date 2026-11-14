@@ -42,6 +42,11 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - `GET /tenants/:id/users` exige Super Admin (antes, qualquer vínculo com o tenant).
 
 ### Fixed
+- Workers do RabbitMQ (auditoria, provisionamento e notificações) entravam em laço
+  infinito quando a conexão com o broker caía: o canal de entregas fechado devolvia
+  mensagens vazias sem parar, gravando ~330 KB/s de log e consumindo vários núcleos da VPS
+  (incidente de 13/11/2026). Agora o worker detecta o fechamento e encerra o processo com
+  erro, e o restart do container reconecta tudo do zero.
 - Reconciliação de ocorrências (`reconciler.go`) trata `tratada` e `resolvida_manual`
   igualmente como desfechos pegajosos, via `OccurrenceState.Sticky()`.
 - Filtros de departamento/função/empresa em `GET /occurrences` passam a ser resolvidos
