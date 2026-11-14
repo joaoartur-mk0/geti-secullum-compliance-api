@@ -7,6 +7,10 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-14
+
+Primeira versão numerada desde que o sistema entrou em uso real (cliente em produção).
+
 ### Added
 - Sincronização de departamento, função e empresa do colaborador a partir do cadastro da
   Secullum (campos sempre existiram no payload, não eram lidos) — filtros novos em
@@ -122,3 +126,6 @@ telas de histórico/ranking/revisão mensal.
 ### Infrastructure
 - `VITE_API_URL` configurável por ambiente, injetada no build de produção do frontend.
 - Docker Compose de produção com serviço de frontend.
+
+[Unreleased]: https://github.com/joaoartur-mk0/geti-secullum-compliance-api/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/joaoartur-mk0/geti-secullum-compliance-api/releases/tag/v1.0.0
