@@ -16,7 +16,8 @@ import { Button, EmptyState, ErrorNote, Field, Input, Select, Skeleton, useToast
 import { api, ApiError } from '../lib/api'
 import { isValidPhone, normalizePhone } from '../lib/format'
 import { isSuperAdmin } from '../lib/session'
-import type { Tenant, User } from '../lib/types'
+import { TENANT_ROLES } from '../lib/types'
+import type { Tenant, TenantRole, TenantUser, User } from '../lib/types'
 
 // Painel de moderação: gestão global de usuários e empresas (tenants), incluindo o
 // vínculo entre eles. Restrito a super admin — ver docs/05_Auth_Backend_Contract.md.
@@ -558,9 +559,11 @@ function TenantRow({
 
 function TenantUserLinks({ tenant, onError }: { tenant: Tenant; onError: (message: string) => void }) {
   const toast = useToast()
-  const [linked, setLinked] = useState<User[] | null>(null)
+  const [linked, setLinked] = useState<TenantUser[] | null>(null)
   const [allUsers, setAllUsers] = useState<User[] | null>(null)
   const [selected, setSelected] = useState('')
+  // Sem papel pré-selecionado: a API exige a escolha explícita (docs/08 §7.1).
+  const [role, setRole] = useState<TenantRole | ''>('')
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -579,15 +582,31 @@ function TenantUserLinks({ tenant, onError }: { tenant: Tenant; onError: (messag
   }, [load])
 
   async function link() {
-    if (!selected) return
+    if (!selected || !role) return
     setBusy(true)
     try {
-      await api.addUserToTenant(tenant.id, { user_id: Number(selected) })
+      await api.addUserToTenant(tenant.id, { user_id: Number(selected), role })
       setSelected('')
+      setRole('')
       toast('success', 'Usuário vinculado à empresa.')
       void load()
     } catch (error) {
       onError(error instanceof ApiError ? error.message : 'Falha ao vincular o usuário.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function changeRole(user: TenantUser, next: TenantRole) {
+    if (next === user.role) return
+    setBusy(true)
+    try {
+      await api.updateTenantUserRole(tenant.id, user.id, next)
+      const label = TENANT_ROLES.find((r) => r.value === next)?.label ?? next
+      toast('success', `${user.name} agora é ${label} em ${tenant.name}.`)
+      void load()
+    } catch (error) {
+      onError(error instanceof ApiError ? error.message : 'Falha ao trocar o papel do usuário.')
     } finally {
       setBusy(false)
     }
@@ -632,6 +651,19 @@ function TenantUserLinks({ tenant, onError }: { tenant: Tenant; onError: (messag
                 <span className="font-medium">{user.name}</span>{' '}
                 <span className="text-ink-soft">{user.email}</span>
               </span>
+              <Select
+                value={user.role}
+                onChange={(e) => changeRole(user, e.target.value as TenantRole)}
+                disabled={busy}
+                aria-label={`Papel de ${user.name} em ${tenant.name}`}
+                className="min-h-9 shrink-0 text-xs"
+              >
+                {TENANT_ROLES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </Select>
               {/* min-h-11 min-w-11: alvo de toque de ~27px (p-1.5 + ícone) ficava abaixo dos
                   44px recomendados para mobile. */}
               <button
@@ -658,11 +690,31 @@ function TenantUserLinks({ tenant, onError }: { tenant: Tenant; onError: (messag
               </option>
             ))}
           </Select>
-          <Button onClick={link} disabled={!selected} busy={busy} className="min-h-9 px-3 text-xs">
+          <Select
+            value={role}
+            onChange={(e) => setRole(e.target.value as TenantRole | '')}
+            aria-label="Papel do usuário nesta empresa"
+            className="min-h-9"
+          >
+            <option value="">Papel…</option>
+            {TENANT_ROLES.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </Select>
+          <Button onClick={link} disabled={!selected || !role} busy={busy} className="min-h-9 px-3 text-xs">
             <UserCog size={14} aria-hidden />
             Vincular
           </Button>
         </div>
+      )}
+      {available.length > 0 && (
+        <p className="mt-1.5 text-xs text-ink-faint">
+          {role
+            ? `${TENANT_ROLES.find((r) => r.value === role)?.label}: ${TENANT_ROLES.find((r) => r.value === role)?.hint}.`
+            : 'RH configura e opera tudo; Gestor opera o dia a dia; Diretoria só acompanha.'}
+        </p>
       )}
     </div>
   )

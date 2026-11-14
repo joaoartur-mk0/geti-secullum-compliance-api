@@ -26,6 +26,8 @@ import type {
   Staff,
   StaffRequest,
   Tenant,
+  TenantRole,
+  TenantUser,
   User,
   Warning,
   WarningCounts,
@@ -189,12 +191,18 @@ export const api = {
   // ---------- Moderação: vínculo usuário↔tenant (só super admin gerencia) ----------
 
   listTenantUsers: (tenantId: number) =>
-    request<{ users: User[] | null }>(`/api/v1/tenants/${tenantId}/users`).then((r) => r.users ?? []),
+    request<{ users: TenantUser[] | null }>(`/api/v1/tenants/${tenantId}/users`).then((r) => r.users ?? []),
 
   addUserToTenant: (tenantId: number, body: AddUserToTenantRequest) =>
     request<{ message: string }>(`/api/v1/tenants/${tenantId}/users`, {
       method: 'POST',
       body: JSON.stringify(body),
+    }),
+
+  updateTenantUserRole: (tenantId: number, userId: number, role: TenantRole) =>
+    request<{ message: string }>(`/api/v1/tenants/${tenantId}/users/${userId}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
     }),
 
   removeUserFromTenant: (tenantId: number, userId: number) =>

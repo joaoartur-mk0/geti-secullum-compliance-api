@@ -35,6 +35,11 @@ adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
   login e em `GET /tenants`; papel mínimo aplicado às rotas de escrita do sistema
   (configurações, filiais, advertências, ocorrências, tratativas, revisão mensal), com a
   exceção da Diretoria em `POST /audit/trigger` (só o fechamento de D-1 sem parâmetro).
+- Painel, tela Moderação: ao vincular um usuário a uma empresa, o super admin escolhe o
+  papel (RH, Gestor ou Diretoria), sem valor pré-selecionado, como a API passou a exigir.
+  A lista de quem tem acesso mostra o papel de cada um e permite trocá-lo ali mesmo
+  (`PATCH /tenants/:id/users/:userId/role`). Vínculos antigos aparecem como RH, o papel
+  atribuído pela migração.
 
 ### Changed
 - `OccurrenceRepository.Ignore` passa a rejeitar (conflito) uma ocorrência que já tem

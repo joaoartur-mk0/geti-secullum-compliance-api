@@ -10,8 +10,20 @@ export interface Tenant {
   active: boolean
 }
 
+// Papel do usuário num tenant — ver docs/08_Roles_And_Permissions_Contract.md.
+// Aninhados: RH ⊃ Gestor ⊃ Diretoria.
+export type TenantRole = 'rh' | 'gestor' | 'diretoria'
+
+export const TENANT_ROLES: { value: TenantRole; label: string; hint: string }[] = [
+  { value: 'rh', label: 'RH', hint: 'configura e opera tudo da empresa' },
+  { value: 'gestor', label: 'Gestor', hint: 'opera o dia a dia' },
+  { value: 'diretoria', label: 'Diretoria', hint: 'só acompanha' },
+]
+
 export interface AddUserToTenantRequest {
   user_id: number
+  // Obrigatório (docs/08 §7.1): sem ele a API responde 400.
+  role: TenantRole
 }
 
 export interface CreateTenantRequest {
@@ -301,6 +313,11 @@ export interface User {
   email: string
   is_super_admin: boolean
   active: boolean
+}
+
+// Usuário vinculado a um tenant, com o papel nesse vínculo (GET /tenants/:id/users).
+export interface TenantUser extends User {
+  role: TenantRole
 }
 
 export interface LoginRequest {
