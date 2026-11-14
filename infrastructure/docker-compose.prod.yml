@@ -129,7 +129,10 @@ services:
           "CMD-SHELL",
           "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-auditoria_db}",
         ]
-      interval: 5s
+      # 30s em regime; na partida checa a cada 2s para o app não esperar mais para subir.
+      interval: 30s
+      start_period: 30s
+      start_interval: 2s
       timeout: 5s
       retries: 5
 
