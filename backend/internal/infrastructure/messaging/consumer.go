@@ -70,16 +70,7 @@ func (c *AuditConsumer) Start(ctx context.Context) error {
 
 	log.Println("[*] Worker de Auditoria aguardando mensagens...")
 
-	// Loop infinito lendo o canal do Go
-	for {
-		select {
-		case msg := <-msgs:
-			c.processMessage(msg)
-		case <-ctx.Done():
-			log.Println("[*] Desligando Worker de Auditoria graciosamente...")
-			return nil
-		}
-	}
+	return consumeLoop(ctx, "Auditoria", msgs, c.processMessage)
 }
 
 // requeueBackoff é a pausa aplicada antes de devolver uma mensagem à fila. O Nack com
