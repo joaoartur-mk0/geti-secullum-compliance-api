@@ -1,4 +1,4 @@
-name: CI/CD - SolaChat
+name: CI - Secullum Compliance
 
 on:
   push:
@@ -8,15 +8,23 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sast-security:
     name: SAST (Gosec & Opengrep)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
 
       - name: Executar Gosec (AST Security)
         run: |
@@ -24,43 +32,74 @@ jobs:
           gosec -exclude-generated -severity medium ./...
 
       - name: Executar Opengrep (Semantic SAST)
+        # Roda na raiz do repositório para cobrir também os Dockerfiles do frontend.
+        working-directory: .
         run: |
           curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
           export PATH="$HOME/.opengrep/cli/latest:$PATH"
-          
+
           # Baixa as regras open-source compatíveis (Semgrep Community Rules)
           git clone --depth 1 https://github.com/opengrep/opengrep-rules.git /tmp/rules
-          
-          # Executa o scan apontando para as regras de Go e Segurança
+
+          # Executa o scan apontando para as regras de Go e Dockerfile
           opengrep scan \
             -f /tmp/rules/go \
             -f /tmp/rules/dockerfile \
             --error .
+
   lint:
-    name: Lint
+    name: Lint (Go)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.15.0
+          working-directory: backend
 
   vuln:
     name: govulncheck
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
-  image:
-    name: Imagem Docker
+  frontend:
+    name: Frontend (lint & build)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v5
-      - run: docker build -t sola-chat:ci .
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  image:
+    name: Imagens Docker
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build ${{ matrix.service }}
+        run: docker build -t secullum-compliance-${{ matrix.service }}:ci ./${{ matrix.service }}
